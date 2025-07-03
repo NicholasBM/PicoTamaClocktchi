@@ -8,17 +8,30 @@ print("Initializing system...")
 time.sleep(1)
 
 try:
-    print("Loading enhanced PicoTamachibi...")
-    import enhanced_picotamachibi
+    print("Loading final PicoTamachibi with all improvements...")
+    
+    # Try to import the final version with all improvements
+    import final_picotamachibi
+    
+    print("Final PicoTamachibi loaded successfully!")
+    
 except Exception as e:
-    print(f"Error loading enhanced PicoTamachibi: {e}")
-    print("Trying to load final PicoTamachibi as fallback...")
+    error_msg = f"Error loading final PicoTamachibi: {e}"
+    print(error_msg)
+    
+    print("Attempting to load enhanced version as fallback...")
     
     try:
-        import final_picotamachibi
-    except Exception as e:
-        print(f"Error loading final PicoTamachibi: {e}")
-        print("All attempts failed. Please check your installation.")
+        # Try to import the enhanced version as fallback
+        import enhanced_picotamachibi
+        
+        print("Enhanced PicoTamachibi loaded successfully as fallback!")
+        
+    except Exception as e2:
+        error_msg = f"Error loading enhanced PicoTamachibi: {e2}"
+        print(error_msg)
+        
+        print("Failed to load PicoTamachibi. Please check your installation.")
         
         # Flash an error pattern on the Pico's built-in LED if available
         try:
@@ -47,5 +60,5 @@ except Exception as e:
                     led.value(0)
                     time.sleep(0.2)
                 time.sleep(1)
-        except:
-            pass
+        except Exception as e3:
+            print(f"LED error indication failed: {e3}")

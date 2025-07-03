@@ -271,25 +271,46 @@ class Animate():
         # load the files from disk
         if not self.__cached:
             try:
-                # First try to look in gui/bitmaps directory
-                bitmap_dir = "gui/bitmaps"
-                print(f"Looking for animation files in {bitmap_dir}")
-                files = listdir(bitmap_dir)
-                array = []
-                base_filename = self.filename.split('/')[-1] if '/' in self.filename else self.filename
+                # Check if filename contains a directory path
+                if '/' in self.filename:
+                    # Extract directory and base filename
+                    directory = '/'.join(self.filename.split('/')[:-1])
+                    base_filename = self.filename.split('/')[-1]
+                    
+                    # Look in the specified directory
+                    print(f"Looking for animation files in {directory}")
+                    try:
+                        files = listdir(directory)
+                        array = []
+                        
+                        for file in files:
+                            if (file.startswith(base_filename)) and (file.endswith('.pbm')):
+                                full_path = f"{directory}/{file}"
+                                print(f"Loading animation frame: {full_path}")
+                                array.append(Icon(filename=full_path, width=self.__width, height=self.__height, x=self.__x, y=self.__y, name=file))
+                    except:
+                        print(f"Error accessing directory {directory}")
+                        array = []
+                else:
+                    # First try to look in gui/bitmaps directory
+                    bitmap_dir = "gui/bitmaps"
+                    print(f"Looking for animation files in {bitmap_dir}")
+                    files = listdir(bitmap_dir)
+                    array = []
+                    base_filename = self.filename
+                    
+                    for file in files:
+                        if (file.startswith(base_filename)) and (file.endswith('.pbm')):
+                            full_path = f"{bitmap_dir}/{file}"
+                            print(f"Loading animation frame: {full_path}")
+                            array.append(Icon(filename=full_path, width=self.__width, height=self.__height, x=self.__x, y=self.__y, name=file))
                 
-                for file in files:
-                    if (file.startswith(base_filename)) and (file.endswith('.pbm')):
-                        full_path = f"{bitmap_dir}/{file}"
-                        print(f"Loading animation frame: {full_path}")
-                        array.append(Icon(filename=full_path, width=self.__width, height=self.__height, x=self.__x, y=self.__y, name=file))
-                
+                # If no files found in specified directory, try current directory
                 if not array:
-                    # If no files found in gui/bitmaps, try current directory
-                    print("No animation files found in gui/bitmaps, trying current directory")
+                    print(f"No animation frames found for {self.filename}, trying current directory")
                     files = listdir()
                     for file in files:
-                        if (file.startswith(self.filename)) and (file.endswith('.pbm')):
+                        if (file.startswith(base_filename)) and (file.endswith('.pbm')):
                             print(f"Loading animation frame: {file}")
                             array.append(Icon(filename=file, width=self.__width, height=self.__height, x=self.__x, y=self.__y, name=file))
                 
@@ -356,35 +377,39 @@ class Animate():
            
             # Loop from the first frame to the last, and then back to the first again, then set done to True
             if self.__bouncing:
-               
+                # We're in the reverse phase (going from last frame back to first)
+                self.reverse()  # Always move backward in this phase
+                
+                # If we've reached the first frame, switch direction
                 if self.__current_frame == 0:
+                    self.__bouncing = False  # Switch to forward phase
+                    
+                    # Check if we should continue or end
                     if self.__loop_count == 0:
-                        self.__done = True
-                    else:
-                        if self.__loop_count >0:
-                            self.__loop_count -=1
-                            self.forward()
-                            self.__bouncing = False
-                    if self.__loop_count == -1:
-                        # bounce infinately
-                        self.forward()
-                        self.__bouncing = False
-                if (self.__current_frame < self.frame_count) and (self.__current_frame>0):
-                    self.reverse()
-            else:
-                if self.__current_frame == 0:
-                    if self.__loop_count == 0:
-                        self.__done = True
+                        self.__done = True  # Animation complete
+                    elif self.__loop_count > 0:
+                        self.__loop_count -= 1  # Decrement loop counter
+                        self.forward()  # Start moving forward again
                     elif self.__loop_count == -1:
-                        # bounce infinatey
-                        self.forward()
+                        # Bounce infinitely
+                        self.forward()  # Start moving forward again
+            else:
+                # We're in the forward phase (going from first frame to last)
+                if self.__current_frame == 0:
+                    # At the first frame
+                    if self.__loop_count == 0:
+                        self.__done = True  # Animation complete
+                    elif self.__loop_count == -1:
+                        # Bounce infinitely
+                        self.forward()  # Move to next frame
                     else:
-                        self.forward()
-                        self.__loop_count -= 1
-                elif self.__current_frame == self.frame_count:
-                    self.reverse()
-                    self.__bouncing = True
+                        self.forward()  # Move to next frame
+                elif self.__current_frame >= self.frame_count:
+                    # Reached the last frame, switch direction
+                    self.__bouncing = True  # Switch to reverse phase
+                    self.reverse()  # Start moving backward
                 else:
+                    # In the middle of the sequence, keep moving forward
                     self.forward()
             
         if self.__animation_type == "default":
@@ -525,11 +550,35 @@ class Event():
         fbuf = framebuf.FrameBuffer(bytearray(128 * 48 * 1), 128, 48, framebuf.MONO_HLSB)
         fbuf.rect(0,0,128,48, 1)
         fbuf.blit(self.sprite.image, 5, 10)
-        fbuf.text(self.message, 32, 18)
+        
+        # Split message into multiple lines if it's too long
+        # With the icon at x=5 and text starting at x=32, we have about 12 characters per line
+        # (128 - 32) / 8 = 12 characters
+        max_chars_per_line = 12
+        
+        if len(self.message) > max_chars_per_line:
+            # Find a good split point (space) near the middle
+            split_point = max_chars_per_line
+            while split_point > 0 and self.message[split_point-1] != ' ':
+                split_point -= 1
+            
+            # If no space found, just split at max_chars_per_line
+            if split_point == 0:
+                split_point = max_chars_per_line
+            
+            # Split the message into two lines
+            line1 = self.message[:split_point].strip()
+            line2 = self.message[split_point:].strip()
+            
+            # Display both lines
+            fbuf.text(line1, 32, 12)  # First line a bit higher
+            fbuf.text(line2, 32, 24)  # Second line a bit lower
+        else:
+            # Display single line (centered vertically)
+            fbuf.text(self.message, 32, 18)
+        
         display.blit(fbuf,0,16)
-#         oled.blit(fbuf, 0, 16)
         display.show()
-#         oled.show()
         sleep(3)  # Changed from 2 to 3 seconds
     
     def tick(self):
