@@ -527,37 +527,6 @@ def wakeup():
     start_rain_effect(force=True)
     
     print(f"Waking up at position {gamestate.states['fox_position']}")
-    global baby
-    
-    # Update sleep tracking variables
-    gamestate.states["last_wake_time"] = time()
-    gamestate.states["total_sleep_time"] = 0  # Reset sleep time counter
-    
-    # Reset quick nap tracking
-    gamestate.states["quick_nap_active"] = False
-    
-    # Improve stats
-    gamestate.states["sleepiness"] = 10
-    gamestate.states["sleeping"] = False
-    gamestate.states["happiness"] = cap_stat(gamestate.states["happiness"] + 2)
-    gamestate.states["health"] = cap_stat(gamestate.states["health"] + 2)
-    
-    babyzzz.set = False
-    
-    # Restore the correct baby animation based on position
-    if gamestate.states["fox_position"] == 0:  # Left
-        baby = baby_left
-    elif gamestate.states["fox_position"] == 1:  # Center
-        baby = baby_center
-    else:  # Right
-        baby = baby_right
-        
-    baby.set = True
-    
-    # Trigger rain immediately after waking up
-    start_rain_effect(force=True)
-    
-    print(f"Waking up at position {gamestate.states['fox_position']}")
 
 def quick_nap():
     """Start a quick 2-minute nap"""
@@ -2879,19 +2848,53 @@ def update_gamestate():
         eat.set = True
         
         # Increment safety counter for eating animation
-        if gamestate.states["eating_protected"]:
-            gamestate.states["eating_frame_counter"] += 1
+        gamestate.states["eating_frame_counter"] = gamestate.states.get("eating_frame_counter", 0) + 1
+        
+        # Force end animation if it's been active for too long (100 frames = 5 seconds)
+        if gamestate.states["eating_frame_counter"] > 100:
+            print("Eating animation timeout - forcing completion")
+            # Force animation to complete
+            gamestate.states["feeding_time"] = False
             
-            # Force end animation if it's been active for too long (200 frames = 10 seconds)
-            if gamestate.states["eating_frame_counter"] > 200:
-                eat.done = True
-                print("Eating animation force-ended due to timeout")
+            # Show energy increase message
+            energy_increase.message = "ENERGY + 2"
+            energy_increase.popup(oled)
+            gamestate.states["health"] = cap_stat(gamestate.states["health"] + 2)
+            gamestate.states["happiness"] = cap_stat(gamestate.states["happiness"] + 2)
+            
+            # Reset animation state
+            eat.set = False
+            baby.set = True
+            gamestate.states["eating_frame_counter"] = 0
+            
+            clear()
+            return
         
         # Only animate once per frame
         eat.animate(oled)
         
-        # Check if animation is done
-    if eat.done:
+        # Check if animation is done - with error handling
+    try:
+        if eat.done:
+            gamestate.states["feeding_time"] = False
+            gamestate.states["eating_protected"] = False  # Reset protection flag
+            gamestate.states["eating_frame_counter"] = 0  # Reset safety counter
+            
+            energy_increase.message = "ENERGY + 2"
+            energy_increase.popup(oled)
+            gamestate.states["health"] = cap_stat(gamestate.states["health"] + 2)
+            gamestate.states["happiness"] = cap_stat(gamestate.states["happiness"] + 2)
+            
+            clear()
+            eat.set = False
+            baby.set = True
+            
+            # Start birds animation after feeding to test bird functionality
+            start_birds_animation()
+    except AttributeError:
+        # If 'done' attribute is missing, force it to be True to end the animation
+        print("Warning: 'done' attribute missing on eat animation, forcing to True")
+        eat._Animate__done = True
         gamestate.states["feeding_time"] = False
         gamestate.states["eating_protected"] = False  # Reset protection flag
         gamestate.states["eating_frame_counter"] = 0  # Reset safety counter
@@ -2904,9 +2907,6 @@ def update_gamestate():
         clear()
         eat.set = False
         baby.set = True
-        
-        # Start birds animation after feeding to test bird functionality
-        start_birds_animation()
         
     if gamestate.states["sleeping"]:
         babyzzz.set = True
