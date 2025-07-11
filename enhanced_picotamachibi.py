@@ -370,6 +370,26 @@ gamestate.states["pet_birth_time"] = time()  # Track when the pet was born
 gamestate.states["show_toolbar"] = True   # Whether to show toolbar (True) or clock (False)
 gamestate.states["toolbar_timer"] = 0     # Timer for toolbar visibility (in frames)
 gamestate.states["alert_reason"] = ""     # Track the reason for the alert
+
+# Wireless visit states
+gamestate.states["visit_active"] = False      # Whether a visit is currently active
+gamestate.states["visitor_data"] = None       # Data about visiting pet
+gamestate.states["host_data"] = None          # Data about host pet
+gamestate.states["visit_combo_timer"] = 0     # Timer for A+X button combination
+gamestate.states["visit_combo_warning_shown"] = False  # Whether warning has been shown
+gamestate.states["network_enabled"] = False   # Whether network is enabled
+gamestate.states["visit_menu_active"] = False # Whether visit menu is active
+gamestate.states["visit_menu_selection"] = 0  # Current menu selection
+gamestate.states["available_pets"] = {}       # Available pets for visiting
+gamestate.states["pet_name"] = "Unknown"      # Pet name for networking
+
+# Network menu states
+gamestate.states["network_menu_active"] = False # Whether network menu is active
+gamestate.states["network_menu_selection"] = 0  # Current network menu selection
+gamestate.states["host_mode_active"] = False    # Whether host mode is active
+gamestate.states["host_mode_timer"] = 0         # Timer for host mode
+gamestate.states["visit_mode_active"] = False   # Whether visit mode is active
+gamestate.states["visit_mode_timer"] = 0        # Timer for visit mode
 # Hide and seek game states
 gamestate.states["hide_seek_active"] = False  # Whether the hide and seek game is active
 gamestate.states["player_score"] = 0      # Player's score in hide and seek
@@ -465,8 +485,8 @@ gamestate.states["last_blank_check"] = time()       # Track last time blank scre
 
 # Game Variables
 TIREDNESS = 7200 # seconds (2 hours)
-POOP_MIN = 3600 # seconds (60 minutes)
-POOP_MAX = 18000 # seconds (5 hours)
+POOP_MIN = 2700 # seconds (45 minutes)
+POOP_MAX = 14400 # seconds (4 hours)
 SLEEP_DURATION = 12 * 60 * 60 # 12 hours in seconds
 HUNGER_CHECK_INTERVAL = 7200 # 1 hour in seconds
 QUICK_NAP_DURATION = 120 # 2 minutes in seconds
@@ -778,6 +798,7 @@ def do_toolbar_stuff():
     
     if tb.selected_item == "food":
         
+        # Select the appropriate eat animation based on fox position
         if gamestate.states["fox_position"] == 0:  # Left
             eat = eat_left
         elif gamestate.states["fox_position"] == 1:  # Center
@@ -793,6 +814,7 @@ def do_toolbar_stuff():
         eat.loop(no=1)  # Ensure it only loops once
         eat.set = True
         gamestate.states["eating_protected"] = True  # Protect the animation
+        gamestate.states["eating_frame_counter"] = 0  # Reset safety counter
         gamestate.states["eating_frame_counter"] = 0  # Reset safety counter
         
         # Show a message to confirm feeding is happening
@@ -811,20 +833,6 @@ def do_toolbar_stuff():
         gamestate.states["is_hungry"] = False
         gamestate.states["hunger_alert_shown"] = False
         gamestate.states["fed_today"] = True  # Mark as fed today for daily care tracking
-        
-        # Select the appropriate eat animation based on fox position
-        if gamestate.states["fox_position"] == 0:  # Left
-            eat = eat_left
-        elif gamestate.states["fox_position"] == 1:  # Center
-            eat = eat_center
-        else:  # Right
-            eat = eat_right
-        
-        # Set up eating animation with protection
-        eat.loop(no=1)  # Ensure it only loops once
-        eat.set = True
-        gamestate.states["eating_protected"] = True  # Protect the animation
-        gamestate.states["eating_frame_counter"] = 0  # Reset safety counter
             
     if tb.selected_item == "game":
         # Wake up if sleeping
@@ -947,6 +955,9 @@ def do_toolbar_stuff():
         # Wake up if sleeping
         force_wake_up()
         
+        # IMPORTANT: Store current pet birth time to preserve age
+        current_birth_time = gamestate.states["pet_birth_time"]
+        
         # Import settings module
         import settings
         
@@ -955,6 +966,9 @@ def do_toolbar_stuff():
         
         # Apply settings if returned
         if pet_settings:
+            # CRITICAL: Restore the original birth time to preserve pet age
+            gamestate.states["pet_birth_time"] = current_birth_time
+            
             # Update pet type if it was changed
             if 'type' in pet_settings and pet_settings['type'] != gamestate.states["pet_type"]:
                 print(f"Pet type changed from {gamestate.states['pet_type']} to {pet_settings['type']}")
@@ -970,6 +984,9 @@ def do_toolbar_stuff():
                 clear()
                 
             if 'name' in pet_settings:
+                # Update the pet name in game state for networking
+                gamestate.states["pet_name"] = pet_settings['name']
+                
                 # Show welcome message with pet name
                 heart_status.message = f"Hello {pet_settings['name']}!"
                 heart_status.popup(oled)
@@ -2779,6 +2796,393 @@ def check_time_of_day():
             # Update last message time
             last_time_message = hour
 
+# Wireless networking functions
+def show_network_menu():
+    """Show the network menu with Host/Visit options"""
+    global pet_network, visit_manager
+    
+    # Initialize network and visit manager if not already done
+    if not gamestate.states["network_enabled"]:
+        try:
+            # Get pet name from settings
+            pet_name = "Unknown"
+            try:
+                saved_settings = load_settings()
+                if saved_settings and 'name' in saved_settings:
+                    pet_name = saved_settings['name']
+                    gamestate.states["pet_name"] = pet_name
+            except:
+                pass
+            
+            # Import network modules
+            import wifi_config
+            from pet_network import PetNetwork
+            from visit_manager import VisitManager
+            
+            # Initialize network
+            pet_network = PetNetwork(pet_name, gamestate.states["pet_type"], wifi_config)
+            visit_manager = VisitManager(gamestate, oled)
+            
+            # Try to connect to WiFi
+            oled.fill(0)
+            oled.text("Connecting WiFi...", 10, 25)
+            oled.show()
+            
+            if pet_network.connect_wifi():
+                # Start visit server (always needed)
+                pet_network.start_visit_server()
+                gamestate.states["network_enabled"] = True
+                
+                oled.fill(0)
+                oled.text("WiFi Connected!", 15, 25)
+                oled.show()
+                sleep(1)
+            else:
+                oled.fill(0)
+                oled.text("WiFi Failed!", 20, 25)
+                oled.text("Check settings", 10, 35)
+                oled.show()
+                sleep(2)
+                return
+                
+        except Exception as e:
+            print(f"Network initialization error: {e}")
+            oled.fill(0)
+            oled.text("Network Error!", 15, 25)
+            oled.text(str(e)[:16], 5, 35)
+            oled.show()
+            sleep(2)
+            return
+    
+    # Show network menu
+    gamestate.states["network_menu_active"] = True
+    gamestate.states["network_menu_selection"] = 0
+    
+    # Draw the network menu
+    draw_network_menu()
+
+def draw_network_menu():
+    """Draw the network menu interface"""
+    oled.fill(0)  # Clear screen
+    
+    # Draw title
+    oled.text("NETWORK MENU", 20, 5)
+    oled.text("-" * 16, 0, 15)
+    
+    # Menu options
+    options = ["Host (Wait)", "Visit (Find)", "Cancel"]
+    
+    start_y = 25
+    for i, option in enumerate(options):
+        # Highlight selected option
+        if i == gamestate.states["network_menu_selection"]:
+            oled.text(f">{option}", 0, start_y + i * 12)
+        else:
+            oled.text(f" {option}", 0, start_y + i * 12)
+    
+    # Show controls
+    oled.text("A:Up B:Select X:Exit", 0, 55)
+    
+    oled.show()
+
+def handle_network_menu_input():
+    """Handle input while network menu is active"""
+    if not gamestate.states.get("network_menu_active", False):
+        return False
+    
+    if button_a.is_pressed:
+        # Move selection up
+        gamestate.states["network_menu_selection"] = (gamestate.states["network_menu_selection"] - 1) % 3
+        draw_network_menu()
+        return True
+        
+    elif button_b.is_pressed:
+        # Select option
+        selection = gamestate.states["network_menu_selection"]
+        gamestate.states["network_menu_active"] = False
+        
+        if selection == 0:  # Host
+            start_host_mode()
+        elif selection == 1:  # Visit
+            start_visit_mode()
+        # selection == 2 is Cancel, just exit
+        
+        return True
+        
+    elif button_x.is_pressed:
+        # Cancel menu
+        gamestate.states["network_menu_active"] = False
+        return True
+        
+    return True  # Menu is active, consume input
+
+def start_host_mode():
+    """Start host mode - broadcast for visitors"""
+    global pet_network
+    
+    oled.fill(0)
+    oled.text("HOST MODE", 30, 10)
+    oled.text("Broadcasting...", 15, 25)
+    oled.text("Waiting for", 20, 35)
+    oled.text("visitors", 25, 45)
+    oled.text("Press X to stop", 10, 55)
+    oled.show()
+    
+    # Start discovery service for broadcasting
+    pet_network.start_discovery_service()
+    
+    # Set host mode state
+    gamestate.states["host_mode_active"] = True
+    gamestate.states["host_mode_timer"] = 1800  # 90 seconds
+    
+    print("Host mode started - broadcasting for 90 seconds")
+
+def start_visit_mode():
+    """Start visit mode - scan for hosts"""
+    global pet_network
+    
+    oled.fill(0)
+    oled.text("VISIT MODE", 25, 10)
+    oled.text("Scanning for hosts...", 5, 25)
+    oled.text("Time left: 90s", 15, 35)
+    oled.text("Press X to cancel", 10, 50)
+    oled.show()
+    
+    # Start discovery listener for visit mode
+    pet_network.start_discovery_listener()
+    
+    # Set visit mode state
+    gamestate.states["visit_mode_active"] = True
+    gamestate.states["visit_mode_timer"] = 1800  # 90 seconds
+    gamestate.states["available_pets"] = {}
+    
+    print("Visit mode started - scanning for 90 seconds")
+
+def update_host_mode():
+    """Update host mode - handle broadcasting and incoming requests"""
+    if not gamestate.states.get("host_mode_active", False):
+        return
+    
+    # Update timer
+    gamestate.states["host_mode_timer"] -= 1
+    remaining_seconds = gamestate.states["host_mode_timer"] // 20
+    
+    # Update display
+    oled.fill(0)
+    oled.text("HOST MODE", 30, 10)
+    oled.text("Broadcasting...", 15, 25)
+    oled.text(f"Time: {remaining_seconds}s", 20, 35)
+    oled.text("Press X to stop", 10, 50)
+    oled.show()
+    
+    # Check for timeout or cancel
+    if gamestate.states["host_mode_timer"] <= 0 or button_x.is_pressed:
+        gamestate.states["host_mode_active"] = False
+        oled.fill(0)
+        oled.text("Host mode ended", 15, 25)
+        oled.show()
+        sleep(1)
+        return
+    
+    # The broadcasting is handled by the existing discovery service
+
+def update_visit_mode():
+    """Update visit mode - scan for available hosts"""
+    if not gamestate.states.get("visit_mode_active", False):
+        return
+    
+    # Listen for discoveries
+    pet_network.listen_for_discoveries()
+    
+    # Update timer
+    gamestate.states["visit_mode_timer"] -= 1
+    remaining_seconds = gamestate.states["visit_mode_timer"] // 20
+    
+    # Get current pets found
+    current_pets = pet_network.get_available_pets()
+    gamestate.states["available_pets"] = current_pets
+    
+    # Update display every 200 frames (10 seconds)
+    if gamestate.states["visit_mode_timer"] % 200 == 0:
+        oled.fill(0)
+        oled.text("VISIT MODE", 25, 10)
+        oled.text("Scanning...", 25, 20)
+        oled.text(f"Time: {remaining_seconds}s", 20, 30)
+        
+        if current_pets:
+            oled.text(f"Found: {len(current_pets)}", 15, 40)
+        else:
+            oled.text("No hosts found", 15, 40)
+            
+        oled.text("Press X to cancel", 10, 50)
+        oled.show()
+    
+    # Check for timeout or cancel
+    if gamestate.states["visit_mode_timer"] <= 0 or button_x.is_pressed:
+        gamestate.states["visit_mode_active"] = False
+        
+        # Show results
+        if current_pets:
+            show_visit_menu()
+        else:
+            oled.fill(0)
+            oled.text("No hosts found", 15, 25)
+            oled.text("Try again later", 15, 35)
+            oled.show()
+            sleep(2)
+        return
+
+def show_visit_menu():
+    """Show the visit menu with found hosts"""
+    # Show visit menu
+    gamestate.states["visit_menu_active"] = True
+    gamestate.states["visit_menu_selection"] = 0
+    
+    # Draw the visit menu
+    draw_visit_menu()
+
+def draw_visit_menu():
+    """Draw the visit menu interface"""
+    oled.fill(0)  # Clear screen
+    
+    # Draw title
+    oled.text("VISIT MENU", 25, 5)
+    oled.text("-" * 16, 0, 15)
+    
+    available_pets = gamestate.states["available_pets"]
+    pet_list = list(available_pets.keys())
+    
+    if not pet_list:
+        oled.text("No pets found", 15, 25)
+        oled.text("A: Refresh", 5, 40)
+        oled.text("X: Cancel", 5, 50)
+    else:
+        # Show available pets (max 3)
+        start_y = 25
+        for i, pet_id in enumerate(pet_list[:3]):
+            pet_data = available_pets[pet_id]
+            pet_name = pet_data['name'][:8]  # Truncate long names
+            pet_type = pet_data['type'][:4]  # Truncate type
+            
+            # Highlight selected pet
+            if i == gamestate.states["visit_menu_selection"]:
+                oled.text(f">{pet_name} {pet_type}", 0, start_y + i * 10)
+            else:
+                oled.text(f" {pet_name} {pet_type}", 0, start_y + i * 10)
+        
+        # Show controls
+        oled.text("A:Up B:Visit X:Exit", 0, 55)
+    
+    oled.show()
+
+def handle_visit_menu_input():
+    """Handle input while visit menu is active"""
+    if not gamestate.states["visit_menu_active"]:
+        return False
+    
+    available_pets = gamestate.states["available_pets"]
+    pet_list = list(available_pets.keys())
+    
+    if button_a.is_pressed:
+        if not pet_list:
+            # Refresh scan
+            show_visit_menu()
+        else:
+            # Move selection up
+            gamestate.states["visit_menu_selection"] = (gamestate.states["visit_menu_selection"] - 1) % len(pet_list)
+            draw_visit_menu()
+        return True
+        
+    elif button_b.is_pressed:
+        # Select pet for visit
+        if pet_list and gamestate.states["visit_menu_selection"] < len(pet_list):
+            selected_pet_id = pet_list[gamestate.states["visit_menu_selection"]]
+            selected_pet = available_pets[selected_pet_id]
+            initiate_visit(selected_pet)
+        gamestate.states["visit_menu_active"] = False
+        return True
+        
+    elif button_x.is_pressed:
+        # Cancel menu
+        gamestate.states["visit_menu_active"] = False
+        return True
+        
+    return True  # Menu is active, consume input
+
+def initiate_visit(target_pet):
+    """Initiate a visit to another pet"""
+    global pet_network, visit_manager
+    
+    heart_status.message = f"Visiting {target_pet['name']}..."
+    heart_status.popup(oled)
+    clear()
+    
+    # Send visit request
+    response = pet_network.send_visit_request(target_pet['ip'], target_pet['port'])
+    
+    if response.get('status') == 'accepted':
+        # Start visit
+        visit_manager.start_visit(
+            visitor_name=gamestate.states["pet_name"],
+            visitor_type=gamestate.states["pet_type"],
+            host_name=target_pet["name"],
+            host_type=target_pet["type"],
+            duration=300
+        )
+        
+        heart_status.message = f"Visit accepted!"
+        heart_status.popup(oled)
+        clear()
+    else:
+        heart_status.message = "Visit declined"
+        heart_status.popup(oled)
+        clear()
+
+def update_visit_system():
+    """Update the visit system - check for incoming visits and update active visits"""
+    global pet_network, visit_manager
+    
+    if not gamestate.states["network_enabled"]:
+        return
+    
+    # Check for incoming visit requests
+    visitor_data = pet_network.check_visit_requests()
+    if visitor_data:
+        # Start hosting a visit
+        visit_manager.start_visit(
+            visitor_name=visitor_data["name"],
+            visitor_type=visitor_data["type"],
+            host_name=gamestate.states["pet_name"],
+            host_type=gamestate.states["pet_type"],
+            duration=visitor_data["duration"]
+        )
+        
+        heart_status.message = f"{visitor_data['name']} is visiting!"
+        heart_status.popup(oled)
+        clear()
+    
+    # Update active visit
+    if visit_manager:
+        visit_manager.update_visit()
+
+def draw_dual_pets_during_visit():
+    """Draw both pets during a visit"""
+    global visit_manager
+    
+    if not gamestate.states["visit_active"] or not visit_manager:
+        return False
+    
+    # Create animation dictionary for visit manager
+    baby_animations = {
+        "fox_baby_left": fox_baby_left,
+        "fox_baby_right": fox_baby_right,
+        "grayhound_baby_left": grayhound_baby_left,
+        "grayhound_baby_right": grayhound_baby_right
+    }
+    
+    # Let visit manager draw the dual pets
+    return visit_manager.draw_dual_pets(baby_animations, oled)
+
 def update_gamestate():
     print(gamestate)
     
@@ -2888,40 +3292,71 @@ def update_gamestate():
         babyzzz_center.set = False
         babyzzz_right.set = False
         
-        start_birds_animation()
         babyzzz.set = False
         baby.set = False
         eat.set = True
         
         # Increment safety counter for eating animation
-        if gamestate.states["eating_protected"]:
-            gamestate.states["eating_frame_counter"] += 1
+        gamestate.states["eating_frame_counter"] = gamestate.states.get("eating_frame_counter", 0) + 1
+        
+        # Force end animation if it's been active for too long (100 frames = 5 seconds)
+        if gamestate.states["eating_frame_counter"] > 100:
+            print("Eating animation timeout - forcing completion")
+            # Force animation to complete
+            gamestate.states["feeding_time"] = False
             
-            # Force end animation if it's been active for too long (200 frames = 10 seconds)
-            if gamestate.states["eating_frame_counter"] > 200:
-                eat.done = True
-                print("Eating animation force-ended due to timeout")
+            # Show energy increase message
+            energy_increase.message = "ENERGY + 2"
+            energy_increase.popup(oled)
+            gamestate.states["health"] = cap_stat(gamestate.states["health"] + 2)
+            gamestate.states["happiness"] = cap_stat(gamestate.states["happiness"] + 2)
+            
+            # Reset animation state
+            eat.set = False
+            baby.set = True
+            gamestate.states["eating_frame_counter"] = 0
+            gamestate.states["eating_protected"] = False  # Reset protection flag
+            
+            clear()
+            return
         
         # Only animate once per frame
         eat.animate(oled)
         
-        # Check if animation is done
-    if eat.done:
-        gamestate.states["feeding_time"] = False
-        gamestate.states["eating_protected"] = False  # Reset protection flag
-        gamestate.states["eating_frame_counter"] = 0  # Reset safety counter
-        
-        energy_increase.message = "Health + 2"
-        energy_increase.popup(oled)
-        gamestate.states["health"] = cap_stat(gamestate.states["health"] + 2)
-        gamestate.states["happiness"] = cap_stat(gamestate.states["happiness"] + 2)
-        
-        clear()
-        eat.set = False
-        baby.set = True
-        
-        # Start birds animation after feeding to test bird functionality
-        start_birds_animation()
+        # Check if animation is done - with error handling
+        try:
+            if eat.done:
+                gamestate.states["feeding_time"] = False
+                gamestate.states["eating_protected"] = False  # Reset protection flag
+                gamestate.states["eating_frame_counter"] = 0  # Reset safety counter
+                
+                energy_increase.message = "ENERGY + 2"
+                energy_increase.popup(oled)
+                gamestate.states["health"] = cap_stat(gamestate.states["health"] + 2)
+                gamestate.states["happiness"] = cap_stat(gamestate.states["happiness"] + 2)
+                
+                clear()
+                eat.set = False
+                baby.set = True
+                
+                # Start birds animation after feeding to test bird functionality
+                start_birds_animation()
+        except AttributeError:
+            # If 'done' attribute is missing, force it to be True to end the animation
+            print("Warning: 'done' attribute missing on eat animation, forcing to True")
+            eat._Animate__done = True
+            gamestate.states["feeding_time"] = False
+            gamestate.states["eating_protected"] = False  # Reset protection flag
+            gamestate.states["eating_frame_counter"] = 0  # Reset safety counter
+            
+            energy_increase.message = "ENERGY + 2"
+            energy_increase.popup(oled)
+            gamestate.states["health"] = cap_stat(gamestate.states["health"] + 2)
+            gamestate.states["happiness"] = cap_stat(gamestate.states["happiness"] + 2)
+            
+            clear()
+            eat.set = False
+            baby.set = True
         
     if gamestate.states["sleeping"]:
         babyzzz.set = True
@@ -3067,21 +3502,27 @@ poopy.set = False
 # Constants for toolbar timer
 TOOLBAR_DISPLAY_TIME = 120  # 6 seconds (120 frames at 0.05s per frame)
 
-# Check for first boot and run settings if needed
+# Simple first boot check - just see if settings file exists
 print("Checking for first boot...")
 try:
-    import settings
-    pet_settings = settings.check_first_boot(i2c, oled)
-    if pet_settings:
-        print(f"First boot setup completed: {pet_settings}")
-        # Apply settings if returned
-        if 'name' in pet_settings:
+    # Try to read the settings file
+    with open('pet_settings.txt', 'r') as f:
+        pass  # File exists, not first boot
+    print("Settings file found - not first boot")
+except:
+    # File doesn't exist, run first boot setup
+    print("No settings file found - running first boot setup")
+    try:
+        import settings
+        pet_settings = settings.run_settings(i2c, oled)
+        if pet_settings:
+            print(f"First boot setup completed: {pet_settings}")
             # Show welcome message with pet name
             heart_status.message = f"Hello {pet_settings['name']}!"
             heart_status.popup(oled)
             clear()
-except Exception as e:
-    print(f"Error during first boot check: {e}")
+    except Exception as e:
+        print(f"Error during first boot setup: {e}")
 
 print("Starting main game loop...")
 # Main Game Loop
@@ -3149,54 +3590,51 @@ while True:
     gamestate.states["death_animation_shown"] = False
     gamestate.states["death_timer"] = 0
     
-    # Secret button combination for testing death
+    # Network menu button combination (A+X for 5 seconds)
     if button_a.is_pressed and button_x.is_pressed:
         # Start or continue tracking hold time
         current_time = time()
         
         # Initialize hold timer if not already set
-        if not gamestate.states.get("death_combo_timer", 0):
-            gamestate.states["death_combo_timer"] = current_time
-            gamestate.states["death_combo_warning_shown"] = False
+        if not gamestate.states.get("visit_combo_timer", 0):
+            gamestate.states["visit_combo_timer"] = current_time
+            gamestate.states["visit_combo_warning_shown"] = False
         
         # Calculate how long buttons have been held
-        hold_duration = current_time - gamestate.states["death_combo_timer"]
+        hold_duration = current_time - gamestate.states["visit_combo_timer"]
         
         # Show warning after 2 seconds
-        if hold_duration > 2 and not gamestate.states.get("death_combo_warning_shown", False):
-            heart_status.message = "Testing death..."
+        if hold_duration > 2 and not gamestate.states.get("visit_combo_warning_shown", False):
+            heart_status.message = "Opening network menu..."
             heart_status.popup(oled)
             clear()
-            gamestate.states["death_combo_warning_shown"] = True
+            gamestate.states["visit_combo_warning_shown"] = True
         
-        # Trigger death after 5 seconds
+        # Open network menu after 5 seconds
         if hold_duration > 5:
             # Reset the timer
-            gamestate.states["death_combo_timer"] = 0
-            gamestate.states["death_combo_warning_shown"] = False
+            gamestate.states["visit_combo_timer"] = 0
+            gamestate.states["visit_combo_warning_shown"] = False
             
-            # Set death cause for testing
-            gamestate.states["death_cause"] = "Testing death"
-            
-            # Trigger death
-            death.set = True
-            gamestate.states["death_screen_shown"] = False
-            
-            # Show message
-            oled.fill(0)
-            oled.text("Death triggered", 10, 20)
-            oled.text("for testing", 20, 35)
-            oled.show()
-            sleep(1)
+            # Show network menu
+            show_network_menu()
     else:
         # Reset the timer if buttons are released
-        gamestate.states["death_combo_timer"] = 0
-        gamestate.states["death_combo_warning_shown"] = False
+        gamestate.states["visit_combo_timer"] = 0
+        gamestate.states["visit_combo_warning_shown"] = False
     
     key = ' '
 
+    # Handle network menu input first
+    if handle_network_menu_input():
+        # Network menu consumed the input, skip other input handling
+        pass
+    # Handle visit menu input
+    elif handle_visit_menu_input():
+        # Visit menu consumed the input, skip other input handling
+        pass
     # Handle button presses for hide and seek game
-    if gamestate.states["hide_seek_active"]:
+    elif gamestate.states["hide_seek_active"]:
         if button_a.is_pressed:
             # Left position guess
             gamestate.states["cancel_count"] = 0  # Reset cancel counter
@@ -3251,34 +3689,79 @@ while True:
         if gamestate.states["toolbar_timer"] == 0:
             gamestate.states["show_toolbar"] = False
     
-    # Check for personality features
-    trigger_random_event()
-    trigger_reflection()
-    check_time_of_day()
+    # IMPORTANT: Update host/visit modes BEFORE animation skip logic
+    # Update host mode if active
+    if gamestate.states.get("host_mode_active", False):
+        update_host_mode()
     
-    # Check daily care requirements and poop effects
-    check_daily_care()
-    update_poop_effects()
+    # Update visit mode if active
+    if gamestate.states.get("visit_mode_active", False):
+        update_visit_mode()
     
-    # Draw mountain background first (bottom layer)
-    draw_mountain(oled)
+    # Skip normal game rendering if ANY network menu is active
+    if (gamestate.states["visit_menu_active"] or 
+        gamestate.states["network_menu_active"] or
+        gamestate.states["host_mode_active"] or
+        gamestate.states["visit_mode_active"]):
+        # Only handle menus - don't draw anything else
+        # The menus are already drawn by their respective draw functions
+        pass
+    else:
+        # Normal game rendering when visit menu is not active
+        
+        # Check for personality features
+        trigger_random_event()
+        trigger_reflection()
+        check_time_of_day()
+        
+        # Check daily care requirements and poop effects
+        check_daily_care()
+        update_poop_effects()
+        
+        # Draw mountain background first (bottom layer)
+        draw_mountain(oled)
+        
+        # Draw rain effect if active (should appear in front of background but behind fox)
+        if gamestate.states["rain_active"]:
+            update_rain_effect(oled)
+        
+        # Update squirrel timers and animation
+        update_squirrel_timers()
+        
+        # Draw squirrel animation if active
+        if gamestate.states["squirrel_active"]:
+            squirrel_animation.animate(oled)
+            # Check if animation is done
+            if squirrel_animation.done:
+                gamestate.states["squirrel_active"] = False
+                squirrel_animation.set = False
+        
+        # Update visit system
+        update_visit_system()
+        
+        # Check if we should draw dual pets during visit
+        if not draw_dual_pets_during_visit():
+            # Update animations (middle layer) only if not in visit mode
+            update_gamestate()
+        
+        # Animation debugging removed
+        
+        # Draw the grass layer (top layer)
+        draw_grass(oled)
+        
+        # Draw ears after grass but before toolbar/clock
+        # This makes the ears appear to be sticking out from within the grass
+        draw_ears(oled)
+        
+        # Draw either toolbar or clock based on state
+        if gamestate.states["show_toolbar"]:
+            # Draw toolbar
+            tb.show(oled)
+        else:
+            # Draw clock and age
+            draw_clock_and_age(oled)
     
-    # Draw rain effect if active (should appear in front of background but behind fox)
-    if gamestate.states["rain_active"]:
-        update_rain_effect(oled)
-    
-    # Update squirrel timers and animation
-    update_squirrel_timers()
-    
-    # Draw squirrel animation if active
-    if gamestate.states["squirrel_active"]:
-        squirrel_animation.animate(oled)
-        # Check if animation is done
-        if squirrel_animation.done:
-            gamestate.states["squirrel_active"] = False
-            squirrel_animation.set = False
-            
-    # Memory management - run garbage collection periodically
+    # Memory management - run garbage collection periodically (always run)
     current_time = time()
     if current_time - gamestate.states["last_gc_time"] > GC_INTERVAL:
         import gc
@@ -3286,7 +3769,7 @@ while True:
         gamestate.states["last_gc_time"] = current_time
         print(f"Periodic garbage collection performed, free memory: {gc.mem_free()}")
     
-    # Memory usage tracking
+    # Memory usage tracking (always run)
     if current_time - gamestate.states["last_memory_check"] > MEMORY_CHECK_INTERVAL:
         import gc
         free_mem = gc.mem_free()
@@ -3307,43 +3790,24 @@ while True:
             # Force more aggressive cleanup
             unload_unused_animations()
     
-    # Check for blank screen periodically
-    if current_time - gamestate.states["last_blank_check"] > BLANK_SCREEN_CHECK_INTERVAL:
+    # Check for blank screen periodically (only when not in visit menu)
+    if not gamestate.states["visit_menu_active"] and current_time - gamestate.states["last_blank_check"] > BLANK_SCREEN_CHECK_INTERVAL:
         gamestate.states["last_blank_check"] = current_time
         check_for_blank_screen()
     
-    # Deep refresh check
-    if current_time - gamestate.states["last_deep_refresh"] > DEEP_REFRESH_INTERVAL:
+    # Deep refresh check (only when not in visit menu)
+    if not gamestate.states["visit_menu_active"] and current_time - gamestate.states["last_deep_refresh"] > DEEP_REFRESH_INTERVAL:
         deep_refresh_animations()
     
-    # Update animation refresh timer and check if refresh is needed
-    gamestate.states["animation_refresh_timer"] += 1
-    frames_since_refresh = gamestate.states["animation_refresh_timer"]
-    seconds_since_refresh = frames_since_refresh * 0.05  # 0.05 seconds per frame
-    
-    # Check if it's time to refresh animations (every 30 minutes)
-    if seconds_since_refresh >= ANIMATION_REFRESH_INTERVAL:
-        refresh_animations()
-    
-    # Update animations (middle layer)
-    update_gamestate()
-    
-    # Animation debugging removed
-    
-    # Draw the grass layer (top layer)
-    draw_grass(oled)
-    
-    # Draw ears after grass but before toolbar/clock
-    # This makes the ears appear to be sticking out from within the grass
-    draw_ears(oled)
-    
-    # Draw either toolbar or clock based on state
-    if gamestate.states["show_toolbar"]:
-        # Draw toolbar
-        tb.show(oled)
-    else:
-        # Draw clock and age
-        draw_clock_and_age(oled)
+    # Update animation refresh timer and check if refresh is needed (only when not in visit menu)
+    if not gamestate.states["visit_menu_active"]:
+        gamestate.states["animation_refresh_timer"] += 1
+        frames_since_refresh = gamestate.states["animation_refresh_timer"]
+        seconds_since_refresh = frames_since_refresh * 0.05  # 0.05 seconds per frame
+        
+        # Check if it's time to refresh animations (every 30 minutes)
+        if seconds_since_refresh >= ANIMATION_REFRESH_INTERVAL:
+            refresh_animations()
     
     # Update display with error handling
     try:
