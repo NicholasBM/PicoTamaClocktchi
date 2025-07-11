@@ -299,7 +299,6 @@ ears_left.set = False
 ears_middle.set = False
 ears_right.set = False
 
-# Random event messages
 random_events = [
     "Found a bug!",
     "Danced a bit.",
@@ -311,7 +310,23 @@ random_events = [
     "Rolled in mud.",
     "Saw a squirrel.",
     "Did a spin!",
-    "Saw a bunny!"
+    "Saw a bunny!",
+    "Miss Hugo!",
+    "Where's Wren?",
+    "Hugo's scent!",
+    "Wren's voice?",
+    "Think of Hugo.",
+    "Wren's laugh!",
+    "Hugo hug?",
+    "Wren play?",
+    "Love Hugo!",
+    "Love Wren!",
+    "Hugo treats?",
+    "Wren games?",
+    "Hugo home?",
+    "Wren coming?",
+    "Dream of Hugo.",
+    "Dream of Wren."
 ]
 
 # Reflection messages based on pet state
@@ -450,8 +465,8 @@ gamestate.states["last_blank_check"] = time()       # Track last time blank scre
 
 # Game Variables
 TIREDNESS = 7200 # seconds (2 hours)
-POOP_MIN = 1200 # seconds (20 minutes)
-POOP_MAX = 7200 # seconds (2 hours)
+POOP_MIN = 3600 # seconds (60 minutes)
+POOP_MAX = 18000 # seconds (5 hours)
 SLEEP_DURATION = 12 * 60 * 60 # 12 hours in seconds
 HUNGER_CHECK_INTERVAL = 7200 # 1 hour in seconds
 QUICK_NAP_DURATION = 120 # 2 minutes in seconds
@@ -1032,8 +1047,8 @@ def do_toolbar_stuff():
         start_walking_animation(direction)
 
 def unhealthy_environment():
-    # Decrease health by 0.7 points per hour (instead of 1 point per 2 hours)
-    gamestate.states["health"] -= 0.1
+    # Decrease health by 0.05 points per hour (instead of 1 point per 1 hours)
+    gamestate.states["health"] -= 0.05
     
     # Check if health is at half and show alert if not already shown
     if gamestate.states["health"] <= 5 and not gamestate.states["poop_alert_shown"]:
@@ -2896,7 +2911,7 @@ def update_gamestate():
         gamestate.states["eating_protected"] = False  # Reset protection flag
         gamestate.states["eating_frame_counter"] = 0  # Reset safety counter
         
-        energy_increase.message = "ENERGY + 2"
+        energy_increase.message = "Health + 2"
         energy_increase.popup(oled)
         gamestate.states["health"] = cap_stat(gamestate.states["health"] + 2)
         gamestate.states["happiness"] = cap_stat(gamestate.states["happiness"] + 2)
