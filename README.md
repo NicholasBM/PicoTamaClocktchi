@@ -1,5 +1,19 @@
 🐣 Enhanced PicoTamaCloktchi Setup Guide
-This is an advanced Tamagotchi-style project based on [Kevin McAleer’s PicoTamachibi](https://github.com/kevinmcaleer/picotamachibi), expanded with additional features and animations. It runs on the Raspberry Pi Pico 2 or Pico 2 W, using MicroPython.
+This is an advanced Tamagotchi-style project based on [Kevin McAleer’s PicoTamachibi](https://github.com/kevinmcaleer/picotamachibi), expanded with additional features and animations. It runs on the Raspberry Pi Pico 2 or Pico 2 W, using MicroPython.This project features two animated virtual pets—a Fox and a Greyhound—living in their own digital environments. Each pet is displayed alongside a functional clock and engages in rich animations that bring their personalities to life.
+
+Key Features:
+
+🦊 Fox and Greyhound Pets – Each pet has unique animations and behaviors.
+
+⏰ Clock Display – A real-time clock is integrated into the display.
+
+🎞️ Smooth Animations – Includes idle, walk, and interaction animations.
+
+🌐 Network Discovery (optional) – If you’re using a Raspberry Pi Pico W, you can enable network features allowing:
+
+The pets to discover each other over the local network.
+
+Visit animations, where the pets interact across devices.
 
 🧰 What You’ll Need
 A Raspberry Pi Pico 2 or 2 W (with header pins is ideal).
@@ -32,7 +46,7 @@ In Thonny, go to Tools > Options > Interpreter and select the correct port and "
 📂 Uploading the Project Files
 Download all the files from this repository (including test scripts and animation assets).
 
-Open Thonny and connect to your Pico.
+Move out the .STL files these are for the printer. Open Thonny and connect to your Pico.
 
 Shift + select all the files in the Thonny file browser, right-click, and choose Upload to /.
 
@@ -42,9 +56,6 @@ You should now see your enhanced PicoTamaCloktchi running!
 
 🧪 Extras Included
 LCD test scripts
-
-Legacy animation assets (useful for customizing or expanding behavior)
-
 
 # PicoTamachibi Enhancements
 
@@ -184,11 +195,30 @@ This document outlines the enhancements made to the original PicoTamachibi code,
 - Added proper z-ordering of visual elements
 
 
-
-
-
 ### Environmental Elements
 - Added mountain background below time bar
 - Implemented grass layer at bottom of screen
 - Created layered drawing system for visual depth
 - Added proper z-ordering of visual elements
+
+🛜 Wi-Fi Setup (for Pi Pico W)
+To enable pet visits over Wi-Fi:
+
+Edit Your Wi-Fi Info
+Open the wifi_config.py file.
+Update the SSID and PASSWORD with your local network credentials.
+Enter Wi-Fi Mode
+When the game loads, hold down buttons A + X until “Connecting...” appears on the screen.
+Once connected, the Network Menu will appear.
+
+Visit or Host Mode
+From the network menu, choose Visit or Host mode:
+Host Mode: Your Pico waits for other devices to connect.
+Visit Mode: Your Pico scans the network for any active Host.
+If a Host is found, you’ll be prompted to Visit.
+
+Pet Sharing & Visit Animations
+When a visit is successful:
+Each Pico sends its pet type (Fox or Greyhound) to the other.
+One of each pet will appear on both screens.
+Visit-specific animations will begin. 
