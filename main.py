@@ -1,52 +1,75 @@
-# main.py - Runs automatically on Raspberry Pi Pico boot
+# Main entry point for Enhanced PicoTamachibi
+# This file automatically runs on device startup
+
 import time
+from machine import Pin
 
-print("Starting PicoTamachibi...")
-print("Initializing system...")
+def show_startup_info():
+    """Show device startup information"""
+    print("\n" + "="*40)
+    print("🐾 ENHANCED PICO TAMACHIBI 🐾")
+    print("="*40)
+    print("Device: Raspberry Pi Pico W")
+    print("Features:")
+    print("- Virtual pet care")
+    print("- Wireless pet visits")
+    print("- Network discovery")
+    print("- OLED display")
+    print("- Interactive games")
+    print("="*40)
 
-# Small delay to ensure all hardware is ready
-time.sleep(1)
-
-try:
-    print("Loading enhanced PicoTamachibi...")
-    
-    # Import the enhanced version
-    import enhanced_picotamachibi
-    
-    print("Enhanced PicoTamachibi loaded successfully!")
-    
-except Exception as e:
-    error_msg = f"Error loading enhanced PicoTamachibi: {e}"
-    print(error_msg)
-    
-    print("Failed to load PicoTamachibi. Please check your installation.")
-    
-    # Flash an error pattern on the Pico's built-in LED if available
+def main():
+    """Main entry point"""
     try:
-        from machine import Pin
-        led = Pin(25, Pin.OUT)  # Pico's built-in LED
+        # Show startup information
+        show_startup_info()
         
-        # Flash SOS pattern
-        for _ in range(3):
-            for _ in range(3):  # Short flashes (S)
-                led.value(1)
-                time.sleep(0.2)
-                led.value(0)
-                time.sleep(0.2)
-            time.sleep(0.4)
-            
-            for _ in range(3):  # Long flashes (O)
-                led.value(1)
-                time.sleep(0.6)
-                led.value(0)
-                time.sleep(0.2)
-            time.sleep(0.4)
-            
-            for _ in range(3):  # Short flashes (S)
-                led.value(1)
-                time.sleep(0.2)
-                led.value(0)
-                time.sleep(0.2)
-            time.sleep(1)
+        # Small delay for system to stabilize
+        print("Initializing Enhanced PicoTamachibi...")
+        time.sleep(2)
+        
+        # Import and run the enhanced game
+        print("🚀 Starting Enhanced PicoTamachibi...")
+        
+        # Import the enhanced game (this will start the main game loop)
+        import enhanced_picotamachibi
+        
+    except KeyboardInterrupt:
+        print("\n\n👋 Game interrupted by user")
+        print("Goodbye!")
+        
+    except ImportError as e:
+        print(f"\n💥 Failed to import enhanced_picotamachibi: {e}")
+        print("Make sure enhanced_picotamachibi.py is on the device")
+        print("Also ensure all required files are present:")
+        print("- fixed_icon.py")
+        print("- settings.py") 
+        print("- wifi_config.py")
+        print("- gui/ directory with all bitmap files")
+        
+        # Flash onboard LED to indicate error
+        try:
+            led = Pin("LED", Pin.OUT)
+            for _ in range(10):
+                led.on()
+                time.sleep(0.5)
+                led.off()
+                time.sleep(0.5)
+        except:
+            pass
+        
     except Exception as e:
-        print(f"LED error indication failed: {e}")
+        print(f"\n💥 Unexpected error: {e}")
+        print("Check that all required files are present")
+        print("Restarting in 10 seconds...")
+        time.sleep(10)
+        
+        # Try to restart
+        try:
+            import machine
+            machine.reset()
+        except:
+            print("Manual restart required")
+
+if __name__ == "__main__":
+    main()

@@ -1,28 +1,24 @@
-# boot.py - Runs on boot before main.py
+# boot.py - Runs on every boot (before main.py)
+# This file sets up the basic system configuration for Enhanced PicoTamachibi
+
 import gc
-import machine
 import time
 
-print("PicoTamachibi Boot Sequence")
-print("==========================")
+print("🔧 Enhanced PicoTamachibi boot sequence starting...")
 
-# Initialize hardware
-print("Initializing hardware...")
+# Enable garbage collection - important for memory management
+gc.enable()
+print("✓ Garbage collection enabled")
 
-# Set CPU frequency to maximum for best performance
-try:
-    machine.freq(133000000)  # 133 MHz
-    print(f"CPU frequency set to {machine.freq() / 1000000} MHz")
-except:
-    print("Could not set CPU frequency")
+# Set up memory management for better performance
+gc.threshold(4096)  # Trigger GC when 4KB of allocations occur
+print("✓ Garbage collection threshold set")
 
-# Run garbage collection to free up memory
-print("Cleaning memory...")
-gc.collect()
-print(f"Free memory: {gc.mem_free()} bytes")
-
-# Small delay to allow hardware to stabilize
+# Small delay to let system stabilize
 time.sleep(0.5)
 
-print("Boot sequence complete")
-print("==========================")
+# Print memory info
+print(f"✓ Free memory: {gc.mem_free()} bytes")
+
+print("✓ Boot sequence complete")
+print("🐾 Starting Enhanced PicoTamachibi...")

@@ -485,7 +485,7 @@ gamestate.states["last_blank_check"] = time()       # Track last time blank scre
 
 # Game Variables
 TIREDNESS = 7200 # seconds (2 hours)
-POOP_MIN = 2700 # seconds (45 minutes)
+POOP_MIN =4000 # seconds (66 minutes)
 POOP_MAX = 14400 # seconds (4 hours)
 SLEEP_DURATION = 12 * 60 * 60 # 12 hours in seconds
 HUNGER_CHECK_INTERVAL = 7200 # 1 hour in seconds
@@ -742,9 +742,14 @@ def draw_grass(display):
         display.blit(grass.image, i * 32, 57)  # 57 = 64 - 7 (moved down by 1px)
 
 def draw_clock_and_age(display):
-    """ Draw the clock and pet age at the top of the screen """
+    """ Draw the clock and pet age at the top of the screen, or visit timer if visit is active """
     # Clear the top area
     display.fill_rect(0, 0, 128, 16, 0)
+    
+    # Check if visit is active and show visit timer instead
+    if gamestate.states.get("visit_active", False):
+        draw_visit_timer(display)
+        return
     
     # Get current time for London (using RTC)
     rtc = RTC()
@@ -780,6 +785,24 @@ def draw_clock_and_age(display):
     # Draw age closer to time (at x=60 instead of x=70)
     display.text(f"Age:{age_days_rounded:.1f}d", 60, 4)
 
+def draw_visit_timer(display):
+    """Draw visit countdown timer when visit is active"""
+    # Get visit data
+    visit_start_time = gamestate.states.get("visit_start_time", time())
+    visit_duration = gamestate.states.get("visit_duration", 300)  # 5 minutes default
+    
+    # Calculate remaining time
+    elapsed = time() - visit_start_time
+    remaining = max(0, visit_duration - elapsed)
+    
+    # Format timer display
+    minutes = int(remaining // 60)
+    seconds = int(remaining % 60)
+    timer_str = f"Visit: {minutes}:{seconds:02d}"
+    
+    # Draw visit timer only
+    display.text(timer_str, 0, 4)
+
 def build_toolbar():
     print("building toolbar")
     toolbar = Toolbar()
@@ -795,6 +818,30 @@ def build_toolbar():
 
 def do_toolbar_stuff():
     global babyzzz  # Move global declaration to the beginning of the function
+    
+    # Check if visit is active and block most interactions
+    if gamestate.states.get("visit_active", False):
+        if tb.selected_item == "heart":
+            # Allow checking visit status during visits
+            visit_status = get_visit_status()
+            if visit_status:
+                remaining_minutes = int(visit_status["remaining"] // 60)
+                remaining_seconds = int(visit_status["remaining"] % 60)
+                heart_status.message = f"Visit: {remaining_minutes}:{remaining_seconds:02d}"
+                heart_status.popup(oled)
+                clear()
+        elif tb.selected_item == "call":
+            # Allow ending visit early
+            heart_status.message = "End visit early?"
+            heart_status.popup(oled)
+            # TODO: Add confirmation dialog and visit ending logic
+            clear()
+        else:
+            # Block all other interactions during visits
+            heart_status.message = "Visit in progress!"
+            heart_status.popup(oled)
+            clear()
+        return
     
     if tb.selected_item == "food":
         
@@ -2796,7 +2843,7 @@ def check_time_of_day():
             # Update last message time
             last_time_message = hour
 
-# Wireless networking functions
+# Wireless networking functions - Updated with working network_test_lcd.py code
 def show_network_menu():
     """Show the network menu with Host/Visit options"""
     global pet_network, visit_manager
@@ -2816,22 +2863,11 @@ def show_network_menu():
             
             # Import network modules
             import wifi_config
-            from pet_network import PetNetwork
-            from visit_manager import VisitManager
             
-            # Initialize network
-            pet_network = PetNetwork(pet_name, gamestate.states["pet_type"], wifi_config)
-            visit_manager = VisitManager(gamestate, oled)
-            
-            # Try to connect to WiFi
-            oled.fill(0)
-            oled.text("Connecting WiFi...", 10, 25)
-            oled.show()
-            
-            if pet_network.connect_wifi():
-                # Start visit server (always needed)
-                pet_network.start_visit_server()
+            # Initialize network with improved connection handling
+            if connect_wifi_improved():
                 gamestate.states["network_enabled"] = True
+                gamestate.states["pet_name"] = pet_name
                 
                 oled.fill(0)
                 oled.text("WiFi Connected!", 15, 25)
@@ -2860,6 +2896,213 @@ def show_network_menu():
     
     # Draw the network menu
     draw_network_menu()
+
+def connect_wifi_improved():
+    """Improved WiFi connection based on network_test_lcd.py"""
+    import network
+    import wifi_config
+    
+    try:
+        wlan = network.WLAN(network.STA_IF)
+        wlan.active(True)
+        
+        if not wlan.isconnected():
+            oled.fill(0)
+            oled.text("Connecting WiFi...", 10, 25)
+            oled.text(wifi_config.WIFI_SSID[:16], 5, 35)
+            oled.show()
+            
+            wlan.connect(wifi_config.WIFI_SSID, wifi_config.WIFI_PASSWORD)
+            
+            # Wait for connection with timeout
+            timeout = 15
+            while not wlan.isconnected() and timeout > 0:
+                sleep(1)
+                timeout -= 1
+                
+                # Update display with countdown
+                oled.fill(0)
+                oled.text("Connecting...", 20, 20)
+                oled.text(f"Timeout: {timeout}s", 15, 35)
+                oled.show()
+            
+            if wlan.isconnected():
+                config = wlan.ifconfig()
+                ip_parts = config[0].split('.')
+                
+                oled.fill(0)
+                oled.text("WiFi Connected!", 15, 15)
+                oled.text(f"IP: {ip_parts[2]}.{ip_parts[3]}", 20, 30)
+                oled.show()
+                sleep(2)
+                
+                print(f"WiFi connected! IP: {config[0]}")
+                gamestate.states["network_ip"] = config[0]
+                return True
+            else:
+                oled.fill(0)
+                oled.text("Connection", 25, 20)
+                oled.text("Failed!", 30, 35)
+                oled.show()
+                sleep(2)
+                return False
+        else:
+            config = wlan.ifconfig()
+            gamestate.states["network_ip"] = config[0]
+            print(f"Already connected to WiFi. IP: {config[0]}")
+            return True
+            
+    except Exception as e:
+        print(f"WiFi connection error: {e}")
+        oled.fill(0)
+        oled.text("WiFi Error:", 20, 20)
+        oled.text(str(e)[:16], 5, 35)
+        oled.show()
+        sleep(2)
+        return False
+
+def discover_servers(port):
+    """Listen for server broadcasts and return first found server IP - from network_test_lcd.py"""
+    import socket
+    import json
+    
+    net_info = get_network_info()
+    
+    try:
+        # Create broadcast listener socket
+        broadcast_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        broadcast_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        broadcast_sock.bind(('', 8081))  # Listen on broadcast port
+        broadcast_sock.settimeout(2.0)
+        
+        print("Listening for host broadcasts on port 8081...")
+        
+        # Listen for broadcasts for 30 seconds
+        start_time = time()
+        while time() - start_time < 30:
+            if button_x.is_pressed:  # Stop button
+                break
+                
+            try:
+                data, addr = broadcast_sock.recvfrom(1024)
+                message = json.loads(data.decode())
+                
+                print(f"📡 BROADCAST RECEIVED!")
+                print(f"From: {addr[0]}:{addr[1]}")
+                print(f"Message: {message}")
+                
+                if message.get('type') == 'host_available':
+                    host_ip = message.get('host_ip')
+                    host_name = message.get('host_name', 'Unknown Host')
+                    
+                    print(f"✓ Found host: {host_name} at {host_ip}")
+                    
+                    # Test if host is actually reachable
+                    if test_host_connection(host_ip, port):
+                        broadcast_sock.close()
+                        return host_ip
+                    else:
+                        print(f"✗ Host {host_ip} not reachable")
+                        
+            except OSError:
+                # Timeout - show progress
+                elapsed = int(time() - start_time)
+                remaining = 30 - elapsed
+                
+                oled.fill(0)
+                oled.text("SEARCHING...", 25, 10)
+                oled.text("Listening for", 15, 25)
+                oled.text("hosts...", 25, 35)
+                oled.text(f"Time left: {remaining}s", 10, 45)
+                oled.text("X: Stop", 40, 55)
+                oled.show()
+                continue
+                
+        broadcast_sock.close()
+        print("No hosts found via broadcast")
+        
+        # Fallback: Try network scanning
+        print("Falling back to network scan...")
+        try:
+            result = scan_for_servers(port)
+            print(f"Scan result: {result}")
+            return result
+        except Exception as scan_error:
+            print(f"Scan error: {scan_error}")
+            return None
+        
+    except Exception as e:
+        print(f"Discovery error: {e}")
+        return None
+
+def scan_for_servers(port):
+    """Scan network for available servers as fallback - from network_test_lcd.py"""
+    net_info = get_network_info()
+    ip_parts = net_info['ip'].split('.')
+    base_ip = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}"
+    
+    print(f"=== NETWORK SCAN FALLBACK ===")
+    print(f"Scanning network: {base_ip}.x")
+    print(f"Client IP: {net_info['ip']}")
+    
+    # Common IP addresses to check
+    test_ips = [1, 2, 10, 11, 100, 101, 200, 201, 218, 219, 220, 254]
+    
+    oled.fill(0)
+    oled.text("SCANNING...", 25, 10)
+    oled.text("Network scan", 15, 25)
+    oled.text("fallback", 25, 35)
+    oled.text("Checking IPs...", 10, 45)
+    oled.text("X: Stop", 40, 55)
+    oled.show()
+    
+    print(f"Will check {len(test_ips)} IP addresses...")
+    
+    for i, last_octet in enumerate(test_ips):
+        if button_x.is_pressed:  # Stop button
+            print("Scan stopped by user")
+            break
+            
+        target_ip = f"{base_ip}.{last_octet}"
+        if target_ip == net_info['ip']:
+            print(f"Skipping own IP: {target_ip}")
+            continue
+        
+        print(f"--- SCANNING {i+1}/{len(test_ips)}: {target_ip} ---")
+        
+        oled.fill(0)
+        oled.text("SCANNING...", 25, 10)
+        oled.text(f"Checking .{last_octet}", 15, 25)
+        oled.text(f"({i+1}/{len(test_ips)})", 25, 35)
+        oled.text("Looking for", 15, 45)
+        oled.text("servers...", 20, 55)
+        oled.show()
+        
+        print(f"Testing connection to {target_ip}:{port}")
+        if test_host_connection(target_ip, port):
+            print(f"✓ SUCCESS: Found server at {target_ip}")
+            return target_ip
+        else:
+            print(f"✗ No server at {target_ip}")
+    
+    print(f"Scan complete - no servers found")
+    return None
+
+def get_network_info():
+    """Get current network configuration"""
+    import network
+    
+    wlan = network.WLAN(network.STA_IF)
+    if not wlan.isconnected():
+        return None
+    
+    config = wlan.ifconfig()
+    return {
+        'ip': config[0],
+        'subnet': config[1], 
+        'gateway': config[2],
+        'dns': config[3]
+    }
 
 def draw_network_menu():
     """Draw the network menu interface"""
@@ -2917,120 +3160,415 @@ def handle_network_menu_input():
     return True  # Menu is active, consume input
 
 def start_host_mode():
-    """Start host mode - broadcast for visitors"""
-    global pet_network
+    """Start host mode - broadcast for visitors using improved UDP server"""
+    import socket
+    import json
+    import wifi_config
+    
+    net_info = get_network_info()
+    if not net_info:
+        oled.fill(0)
+        oled.text("Network Error!", 15, 25)
+        oled.show()
+        sleep(2)
+        return
+    
+    port = wifi_config.VISIT_PORT
+    ip_parts = net_info['ip'].split('.')
     
     oled.fill(0)
     oled.text("HOST MODE", 30, 10)
     oled.text("Broadcasting...", 15, 25)
-    oled.text("Waiting for", 20, 35)
-    oled.text("visitors", 25, 45)
-    oled.text("Press X to stop", 10, 55)
+    oled.text(f"IP: {ip_parts[2]}.{ip_parts[3]}", 20, 35)
+    oled.text("Waiting for", 20, 45)
+    oled.text("visitors", 25, 55)
     oled.show()
-    
-    # Start discovery service for broadcasting
-    pet_network.start_discovery_service()
     
     # Set host mode state
     gamestate.states["host_mode_active"] = True
     gamestate.states["host_mode_timer"] = 1800  # 90 seconds
+    gamestate.states["host_socket"] = None
+    gamestate.states["broadcast_socket"] = None
+    gamestate.states["last_broadcast"] = 0
+    gamestate.states["message_count"] = 0
     
-    print("Host mode started - broadcasting for 90 seconds")
+    try:
+        # Create main server socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((net_info['ip'], port))
+        sock.settimeout(1.0)
+        gamestate.states["host_socket"] = sock
+        
+        # Create broadcast socket
+        broadcast_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        broadcast_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        gamestate.states["broadcast_socket"] = broadcast_sock
+        
+        print(f"Host mode started - UDP server on {net_info['ip']}:{port}")
+        
+    except Exception as e:
+        print(f"Host mode setup error: {e}")
+        oled.fill(0)
+        oled.text("Host Setup Error!", 10, 25)
+        oled.text(str(e)[:16], 5, 35)
+        oled.show()
+        sleep(2)
+        gamestate.states["host_mode_active"] = False
 
 def start_visit_mode():
-    """Start visit mode - scan for hosts"""
-    global pet_network
+    """Start visit mode - actively scan for hosts using network scanning"""
+    import socket
+    import json
+    import wifi_config
+    
+    net_info = get_network_info()
+    if not net_info:
+        oled.fill(0)
+        oled.text("Network Error!", 15, 25)
+        oled.show()
+        sleep(2)
+        return
     
     oled.fill(0)
     oled.text("VISIT MODE", 25, 10)
-    oled.text("Scanning for hosts...", 5, 25)
-    oled.text("Time left: 90s", 15, 35)
+    oled.text("Scanning network...", 5, 25)
+    oled.text("Looking for hosts", 10, 35)
     oled.text("Press X to cancel", 10, 50)
     oled.show()
     
-    # Start discovery listener for visit mode
-    pet_network.start_discovery_listener()
-    
-    # Set visit mode state
+    # Set visit mode state - use active scanning
     gamestate.states["visit_mode_active"] = True
     gamestate.states["visit_mode_timer"] = 1800  # 90 seconds
     gamestate.states["available_pets"] = {}
+    gamestate.states["scan_progress"] = 0
+    gamestate.states["scan_total"] = 12  # Number of IPs to scan
+    gamestate.states["found_hosts"] = []
     
-    print("Visit mode started - scanning for 90 seconds")
+    print("Visit mode started - active network scanning")
+
+def scan_for_hosts():
+    """Actively scan network for available hosts"""
+    import socket
+    import json
+    import wifi_config
+    
+    net_info = get_network_info()
+    if not net_info:
+        return []
+    
+    ip_parts = net_info['ip'].split('.')
+    base_ip = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}"
+    my_ip = net_info['ip']
+    
+    # Common IP addresses to check (same as working test)
+    test_ips = [1, 2, 10, 11, 100, 101, 200, 201, 218, 219, 220, 254]
+    found_hosts = []
+    
+    print(f"Scanning network: {base_ip}.x")
+    print(f"Client IP: {my_ip}")
+    
+    for i, last_octet in enumerate(test_ips):
+        # Check for cancel button
+        if button_x.is_pressed:
+            print("Scan stopped by user")
+            break
+            
+        target_ip = f"{base_ip}.{last_octet}"
+        if target_ip == my_ip:
+            print(f"Skipping own IP: {target_ip}")
+            continue
+        
+        # Update progress display
+        gamestate.states["scan_progress"] = i + 1
+        oled.fill(0)
+        oled.text("SCANNING...", 25, 10)
+        oled.text(f"Checking .{last_octet}", 15, 25)
+        oled.text(f"({i+1}/{len(test_ips)})", 35, 35)
+        oled.text(f"Found: {len(found_hosts)}", 20, 45)
+        oled.text("X: Stop", 40, 55)
+        oled.show()
+        
+        print(f"Testing {target_ip}...")
+        
+        # Test if this IP has a host
+        if test_host_connection(target_ip, wifi_config.VISIT_PORT):
+            print(f"✓ Found host at {target_ip}")
+            found_hosts.append(target_ip)
+            
+            # Show found host briefly
+            oled.fill(0)
+            oled.text("HOST FOUND!", 20, 15)
+            oled.text(f"IP: .{last_octet}", 25, 30)
+            oled.text(f"Total: {len(found_hosts)}", 20, 45)
+            oled.show()
+            sleep(1)
+        else:
+            print(f"✗ No host at {target_ip}")
+    
+    return found_hosts
+
+def test_host_connection(host_ip, port):
+    """Test if a host is running a server - from working network_test_lcd.py"""
+    import socket
+    import json
+    
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(3.0)  # 3 second timeout
+        
+        # Send ping to test server
+        net_info = get_network_info()
+        ping_msg = {
+            "type": "ping",
+            "from": net_info['ip'],
+            "timestamp": time()
+        }
+        
+        print(f"    Sending ping to {host_ip}:{port}")
+        sock.sendto(json.dumps(ping_msg).encode(), (host_ip, port))
+        
+        # Wait for response
+        data, addr = sock.recvfrom(1024)
+        response = json.loads(data.decode())
+        
+        print(f"    ✓ Got response: {response}")
+        
+        # Check if it's a valid server response
+        if response.get('type') == 'server_response':
+            print(f"    ✓ Valid server response detected!")
+            sock.close()
+            return True
+        else:
+            print(f"    ✗ Invalid response type: {response.get('type')}")
+            sock.close()
+            return False
+            
+    except Exception as e:
+        print(f"    ✗ Connection test failed: {e}")
+        try:
+            sock.close()
+        except:
+            pass
+        return False
 
 def update_host_mode():
-    """Update host mode - handle broadcasting and incoming requests"""
+    """Update host mode - handle broadcasting and incoming requests using improved UDP server"""
     if not gamestate.states.get("host_mode_active", False):
         return
+    
+    import json
+    import wifi_config
     
     # Update timer
     gamestate.states["host_mode_timer"] -= 1
     remaining_seconds = gamestate.states["host_mode_timer"] // 20
     
-    # Update display
-    oled.fill(0)
-    oled.text("HOST MODE", 30, 10)
-    oled.text("Broadcasting...", 15, 25)
-    oled.text(f"Time: {remaining_seconds}s", 20, 35)
-    oled.text("Press X to stop", 10, 50)
-    oled.show()
-    
     # Check for timeout or cancel
     if gamestate.states["host_mode_timer"] <= 0 or button_x.is_pressed:
+        # Clean up sockets
+        if gamestate.states.get("host_socket"):
+            try:
+                gamestate.states["host_socket"].close()
+            except:
+                pass
+        if gamestate.states.get("broadcast_socket"):
+            try:
+                gamestate.states["broadcast_socket"].close()
+            except:
+                pass
+        
         gamestate.states["host_mode_active"] = False
         oled.fill(0)
         oled.text("Host mode ended", 15, 25)
+        oled.text(f"Got {gamestate.states.get('message_count', 0)} msgs", 10, 35)
+        oled.show()
+        sleep(2)
+        return
+    
+    # Handle broadcasting and incoming messages
+    sock = gamestate.states.get("host_socket")
+    broadcast_sock = gamestate.states.get("broadcast_socket")
+    
+    if not sock or not broadcast_sock:
+        return
+    
+    try:
+        # Try to receive message
+        data, addr = sock.recvfrom(1024)
+        
+        print(f"Received UDP packet from {addr[0]}:{addr[1]}")
+        
+        try:
+            message = json.loads(data.decode())
+            print(f"Parsed JSON: {message}")
+        except:
+            print("Not valid JSON, treating as raw string")
+            message = {"raw_data": data.decode(), "type": "raw"}
+        
+        gamestate.states["message_count"] = gamestate.states.get("message_count", 0) + 1
+        msg_type = message.get('type', 'unknown')
+        
+        # Handle visit requests specially - THIS IS THE KEY MISSING PIECE!
+        if msg_type == 'visit_request':
+            result = handle_visit_request(message, addr, sock)
+            if result == "visit_accepted":
+                # Start visit session
+                visitor_name = message.get('visitor_name', 'Unknown')
+                visitor_ip = message.get('visitor_ip', addr[0])
+                host_name = gamestate.states.get("pet_name", "Host")
+                
+                start_visit_session(visitor_name, "Unknown", host_name, gamestate.states["pet_type"], 300, "host")
+                
+                # End host mode and enter visit mode
+                gamestate.states["host_mode_active"] = False
+                if gamestate.states.get("host_socket"):
+                    try:
+                        gamestate.states["host_socket"].close()
+                    except:
+                        pass
+                if gamestate.states.get("broadcast_socket"):
+                    try:
+                        gamestate.states["broadcast_socket"].close()
+                    except:
+                        pass
+                return
+            # Continue normal host operation if visit was rejected
+            return
+        
+        # Show received message for non-visit requests
+        client_ip = addr[0].split('.')[-1]  # Last octet only
+        
+        oled.fill(0)
+        oled.text("HOST MODE", 30, 10)
+        oled.text(f"MSG #{gamestate.states['message_count']}", 15, 20)
+        oled.text(f"From: .{client_ip}", 15, 30)
+        oled.text(f"Type: {msg_type}", 15, 40)
+        oled.text("Sending reply...", 15, 50)
+        oled.show()
+        
+        # Send response
+        net_info = get_network_info()
+        response = {
+            "type": "server_response",
+            "server_ip": net_info['ip'],
+            "message": f"Server got msg #{gamestate.states['message_count']}",
+            "timestamp": time(),
+            "original_type": msg_type
+        }
+        
+        sock.sendto(json.dumps(response).encode(), addr)
+        print(f"Response sent to {addr[0]}:{addr[1]}")
+        
+        sleep(2)  # Show message for 2 seconds
+        
+    except OSError:
+        # Timeout - handle broadcasting
+        current_time = time()
+        last_broadcast = gamestate.states.get("last_broadcast", 0)
+        
+        # Broadcast availability every 5 seconds
+        if current_time - last_broadcast > 5:
+            try:
+                net_info = get_network_info()
+                pet_name = gamestate.states.get("pet_name", "Unknown")
+                
+                # Create broadcast message
+                broadcast_message = {
+                    "type": "host_available",
+                    "host_ip": net_info['ip'],
+                    "host_name": f"Pet Host {pet_name}",
+                    "port": wifi_config.VISIT_PORT,
+                    "timestamp": current_time
+                }
+                
+                # Calculate broadcast address
+                ip_parts = net_info['ip'].split('.')
+                broadcast_ip = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.255"
+                
+                # Send broadcast
+                broadcast_sock.sendto(
+                    json.dumps(broadcast_message).encode(), 
+                    (broadcast_ip, wifi_config.DISCOVERY_PORT)
+                )
+                
+                print(f"Broadcasting to {broadcast_ip}:{wifi_config.DISCOVERY_PORT}")
+                gamestate.states["last_broadcast"] = current_time
+                
+            except Exception as e:
+                print(f"Broadcast error: {e}")
+        
+        # Update display periodically
+        oled.fill(0)
+        oled.text("HOST MODE", 30, 10)
+        oled.text("Broadcasting...", 15, 25)
+        oled.text(f"Time: {remaining_seconds}s", 20, 35)
+        oled.text(f"Got {gamestate.states.get('message_count', 0)} msgs", 10, 45)
+        oled.text("Press X to stop", 10, 55)
+        oled.show()
+        
+    except Exception as e:
+        print(f"Host mode error: {e}")
+        oled.fill(0)
+        oled.text("HOST ERROR:", 20, 20)
+        oled.text(str(e)[:16], 5, 35)
+        oled.show()
+        sleep(2)
+
+def update_visit_mode():
+    """Update visit mode - actively scan for hosts"""
+    if not gamestate.states.get("visit_mode_active", False):
+        return
+    
+    # Check for timeout or cancel first
+    if button_x.is_pressed:
+        gamestate.states["visit_mode_active"] = False
+        oled.fill(0)
+        oled.text("Scan cancelled", 20, 25)
         oled.show()
         sleep(1)
         return
     
-    # The broadcasting is handled by the existing discovery service
-
-def update_visit_mode():
-    """Update visit mode - scan for available hosts"""
-    if not gamestate.states.get("visit_mode_active", False):
-        return
+    # Perform the actual network scan
+    found_hosts = scan_for_hosts()
     
-    # Listen for discoveries
-    pet_network.listen_for_discoveries()
+    # End visit mode after scan completes
+    gamestate.states["visit_mode_active"] = False
     
-    # Update timer
-    gamestate.states["visit_mode_timer"] -= 1
-    remaining_seconds = gamestate.states["visit_mode_timer"] // 20
-    
-    # Get current pets found
-    current_pets = pet_network.get_available_pets()
-    gamestate.states["available_pets"] = current_pets
-    
-    # Update display every 200 frames (10 seconds)
-    if gamestate.states["visit_mode_timer"] % 200 == 0:
+    # Show results
+    if found_hosts:
+        # Convert found IPs to pet data format for compatibility
+        available_pets = {}
+        for i, host_ip in enumerate(found_hosts):
+            pet_id = f"host_{i}_{host_ip.split('.')[-1]}"
+            available_pets[pet_id] = {
+                "name": f"Pet{host_ip.split('.')[-1]}",
+                "type": "Unknown",
+                "ip": host_ip,
+                "port": 8080,
+                "available": True,
+                "last_seen": time()
+            }
+        
+        gamestate.states["available_pets"] = available_pets
+        
+        # Show visit menu with found hosts
         oled.fill(0)
-        oled.text("VISIT MODE", 25, 10)
-        oled.text("Scanning...", 25, 20)
-        oled.text(f"Time: {remaining_seconds}s", 20, 30)
-        
-        if current_pets:
-            oled.text(f"Found: {len(current_pets)}", 15, 40)
-        else:
-            oled.text("No hosts found", 15, 40)
-            
-        oled.text("Press X to cancel", 10, 50)
+        oled.text("SCAN COMPLETE", 15, 15)
+        oled.text(f"Found {len(found_hosts)} hosts!", 10, 30)
+        oled.text("Opening menu...", 15, 45)
         oled.show()
-    
-    # Check for timeout or cancel
-    if gamestate.states["visit_mode_timer"] <= 0 or button_x.is_pressed:
-        gamestate.states["visit_mode_active"] = False
+        sleep(2)
         
-        # Show results
-        if current_pets:
-            show_visit_menu()
-        else:
-            oled.fill(0)
-            oled.text("No hosts found", 15, 25)
-            oled.text("Try again later", 15, 35)
-            oled.show()
-            sleep(2)
-        return
+        show_visit_menu()
+    else:
+        # No hosts found
+        oled.fill(0)
+        oled.text("SCAN COMPLETE", 15, 15)
+        oled.text("No hosts found", 15, 30)
+        oled.text("Try again later", 15, 45)
+        oled.show()
+        sleep(3)
 
 def show_visit_menu():
     """Show the visit menu with found hosts"""
@@ -3109,79 +3647,272 @@ def handle_visit_menu_input():
         
     return True  # Menu is active, consume input
 
+def handle_visit_request(message, addr, sock):
+    """Handle incoming visit request - auto-accept when in host mode"""
+    import json
+    
+    visitor_name = message.get('visitor_name', 'Unknown')
+    visitor_ip = message.get('visitor_ip', addr[0])
+    visitor_short = visitor_ip.split('.')[-1]
+    
+    net_info = get_network_info()
+    host_name = gamestate.states.get("pet_name", f"Pet{net_info['ip'].split('.')[-1]}")
+    
+    print(f"Visit request from {visitor_name} at {visitor_ip}")
+    
+    # Show visit request notification (auto-accepting)
+    oled.fill(0)
+    oled.text("VISIT REQUEST!", 15, 5)
+    oled.text("=" * 16, 0, 15)
+    oled.text(f"From: {visitor_name}", 5, 25)
+    oled.text(f"IP: .{visitor_short}", 5, 35)
+    oled.text("Auto-accepting...", 10, 45)
+    oled.show()
+    sleep(1)  # Brief display
+    
+    # Automatically accept the visit request
+    response = {
+        "type": "visit_response",
+        "status": "accepted",
+        "host_name": host_name,
+        "host_ip": net_info['ip'],
+        "duration": 300,  # 5 minutes
+        "timestamp": time()
+    }
+    
+    sock.sendto(json.dumps(response).encode(), addr)
+    print(f"Visit auto-accepted, sent response: {response}")
+    
+    oled.fill(0)
+    oled.text("VISIT ACCEPTED!", 15, 15)
+    oled.text("=" * 16, 0, 25)
+    oled.text(f"Guest: {visitor_name}", 5, 35)
+    oled.text("Starting visit...", 15, 45)
+    oled.show()
+    sleep(2)
+    
+    return "visit_accepted"
+
 def initiate_visit(target_pet):
-    """Initiate a visit to another pet"""
-    global pet_network, visit_manager
+    """Initiate a visit to another pet - updated to send proper visit request"""
+    import socket
+    import json
+    import wifi_config
     
     heart_status.message = f"Visiting {target_pet['name']}..."
     heart_status.popup(oled)
     clear()
     
-    # Send visit request
-    response = pet_network.send_visit_request(target_pet['ip'], target_pet['port'])
-    
-    if response.get('status') == 'accepted':
-        # Start visit
-        visit_manager.start_visit(
-            visitor_name=gamestate.states["pet_name"],
-            visitor_type=gamestate.states["pet_type"],
-            host_name=target_pet["name"],
-            host_type=target_pet["type"],
-            duration=300
-        )
+    # Send visit request using proper protocol from network_test_lcd.py
+    try:
+        net_info = get_network_info()
+        visitor_name = gamestate.states.get("pet_name", f"Pet{net_info['ip'].split('.')[-1]}")
         
-        heart_status.message = f"Visit accepted!"
-        heart_status.popup(oled)
-        clear()
-    else:
-        heart_status.message = "Visit declined"
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(10.0)  # 10 second timeout
+        
+        # Send visit request
+        visit_request = {
+            "type": "visit_request",
+            "visitor_name": visitor_name,
+            "visitor_ip": net_info['ip'],
+            "duration": 300,  # 5 minutes
+            "timestamp": time()
+        }
+        
+        print(f"Sending visit request: {visit_request}")
+        sock.sendto(json.dumps(visit_request).encode(), (target_pet['ip'], target_pet['port']))
+        
+        # Wait for response
+        try:
+            data, addr = sock.recvfrom(1024)
+            response = json.loads(data.decode())
+            print(f"Visit response: {response}")
+            
+            if response.get('type') == 'visit_response':
+                if response.get('status') == 'accepted':
+                    # Visit accepted - start visit session
+                    host_name = response.get('host_name', target_pet['name'])
+                    
+                    heart_status.message = f"Visit accepted!"
+                    heart_status.popup(oled)
+                    clear()
+                    
+                    # Start visit session as visitor
+                    start_visit_session(visitor_name, gamestate.states["pet_type"], host_name, "Unknown", 300, "visitor")
+                    
+                else:
+                    # Visit rejected
+                    reason = response.get('reason', 'No reason given')
+                    heart_status.message = f"Visit rejected: {reason}"
+                    heart_status.popup(oled)
+                    clear()
+            else:
+                heart_status.message = "Invalid response"
+                heart_status.popup(oled)
+                clear()
+                
+        except OSError:
+            # Timeout - no response
+            heart_status.message = "No response from host"
+            heart_status.popup(oled)
+            clear()
+        
+        sock.close()
+        
+    except Exception as e:
+        print(f"Visit request error: {e}")
+        heart_status.message = f"Visit error: {str(e)[:10]}"
         heart_status.popup(oled)
         clear()
 
 def update_visit_system():
-    """Update the visit system - check for incoming visits and update active visits"""
-    global pet_network, visit_manager
+    """Update the visit system - handle active visits"""
+    # Update visit timer if visit is active
+    update_visit_timer()
+
+def get_visit_status():
+    """Get current visit status information"""
+    if not gamestate.states.get("visit_active", False):
+        return None
+        
+    visit_start_time = gamestate.states.get("visit_start_time", time())
+    visit_duration = gamestate.states.get("visit_duration", 300)
     
-    if not gamestate.states["network_enabled"]:
+    elapsed = time() - visit_start_time
+    remaining = max(0, visit_duration - elapsed)
+    
+    return {
+        "active": True,
+        "elapsed": elapsed,
+        "remaining": remaining,
+        "progress": elapsed / visit_duration if visit_duration > 0 else 1.0
+    }
+
+def start_visit_session(visitor_name, visitor_type, host_name, host_type, duration=300, role="host"):
+    """Start a visit session with proper state management"""
+    # Set visit state
+    gamestate.states["visit_active"] = True
+    gamestate.states["visit_start_time"] = time()
+    gamestate.states["visit_duration"] = duration
+    gamestate.states["visit_role"] = role
+    gamestate.states["visitor_name"] = visitor_name
+    gamestate.states["host_name"] = host_name
+    
+    # Show visit start message
+    if role == "visitor":
+        heart_status.message = f"Visiting {host_name}!"
+    else:
+        heart_status.message = f"{visitor_name} visiting!"
+    
+    heart_status.popup(oled)
+    clear()
+    
+    print(f"Visit started: {visitor_name} ({visitor_type}) {'visiting' if role == 'visitor' else 'hosting'} {host_name} ({host_type})")
+
+def update_visit_timer():
+    """Update visit timer and end visit when time expires"""
+    if not gamestate.states.get("visit_active", False):
         return
     
-    # Check for incoming visit requests
-    visitor_data = pet_network.check_visit_requests()
-    if visitor_data:
-        # Start hosting a visit
-        visit_manager.start_visit(
-            visitor_name=visitor_data["name"],
-            visitor_type=visitor_data["type"],
-            host_name=gamestate.states["pet_name"],
-            host_type=gamestate.states["pet_type"],
-            duration=visitor_data["duration"]
-        )
-        
-        heart_status.message = f"{visitor_data['name']} is visiting!"
-        heart_status.popup(oled)
-        clear()
+    visit_start_time = gamestate.states.get("visit_start_time", time())
+    visit_duration = gamestate.states.get("visit_duration", 300)
     
-    # Update active visit
-    if visit_manager:
-        visit_manager.update_visit()
+    elapsed = time() - visit_start_time
+    
+    # Check if visit should end
+    if elapsed >= visit_duration:
+        end_visit_session()
+
+def end_visit_session():
+    """End the current visit session"""
+    if not gamestate.states.get("visit_active", False):
+        return
+    
+    # Show goodbye message
+    visitor_name = gamestate.states.get("visitor_name", "Visitor")
+    host_name = gamestate.states.get("host_name", "Host")
+    role = gamestate.states.get("visit_role", "host")
+    
+    if role == "visitor":
+        heart_status.message = f"Thanks {host_name}!"
+    else:
+        heart_status.message = f"Bye {visitor_name}!"
+    
+    heart_status.popup(oled)
+    clear()
+    
+    # Give happiness boost
+    gamestate.states["happiness"] = cap_stat(gamestate.states["happiness"] + 3)
+    
+    # Reset visit state
+    gamestate.states["visit_active"] = False
+    gamestate.states["visit_start_time"] = 0
+    gamestate.states["visit_duration"] = 0
+    gamestate.states["visit_role"] = None
+    gamestate.states["visitor_name"] = None
+    gamestate.states["host_name"] = None
+    
+    print("Visit ended")
 
 def draw_dual_pets_during_visit():
     """Draw both pets during a visit"""
-    global visit_manager
-    
-    if not gamestate.states["visit_active"] or not visit_manager:
+    if not gamestate.states.get("visit_active", False):
         return False
     
-    # Create animation dictionary for visit manager
-    baby_animations = {
-        "fox_baby_left": fox_baby_left,
-        "fox_baby_right": fox_baby_right,
-        "grayhound_baby_left": grayhound_baby_left,
-        "grayhound_baby_right": grayhound_baby_right
-    }
+    # Clear the pet area
+    oled.fill_rect(0, 16, 128, 48, 0)
     
-    # Let visit manager draw the dual pets
-    return visit_manager.draw_dual_pets(baby_animations, oled)
+    # Get visitor and host info
+    visitor_name = gamestate.states.get("visitor_name", "Guest")
+    host_name = gamestate.states.get("host_name", "Host")
+    role = gamestate.states.get("visit_role", "host")
+    my_pet_type = gamestate.states.get("pet_type", "Fox")
+    
+    # Determine what pet types to show based on role
+    if role == "visitor":
+        # I am visiting someone else
+        # Left side: My pet (visitor)
+        # Right side: Host pet (assume opposite type for now)
+        visitor_type = my_pet_type
+        host_type = "Grayhound" if my_pet_type == "Fox" else "Fox"
+    else:
+        # I am hosting someone
+        # Left side: Visitor pet (assume opposite type for now) 
+        # Right side: My pet (host)
+        visitor_type = "Grayhound" if my_pet_type == "Fox" else "Fox"
+        host_type = my_pet_type
+    
+    # Select appropriate animations based on pet types
+    # Left side - Visitor
+    if visitor_type == "Fox":
+        visitor_anim = fox_baby_left
+    else:
+        visitor_anim = grayhound_baby_left
+    
+    # Right side - Host
+    if host_type == "Fox":
+        host_anim = fox_baby_right
+    else:
+        host_anim = grayhound_baby_right
+    
+    # Set animations active and speed up for excitement
+    visitor_anim.set = True
+    host_anim.set = True
+    visitor_anim.speed = 'normal'
+    host_anim.speed = 'normal'
+    
+    # Animate both pets
+    visitor_anim.animate(oled)
+    host_anim.animate(oled)
+    
+    # Draw visit info at top
+    visitor_short = visitor_name[:6]
+    host_short = host_name[:6]
+    
+    oled.text(f"{visitor_short}<->{host_short}", 15, 4)
+    
+    return True
 
 def update_gamestate():
     print(gamestate)

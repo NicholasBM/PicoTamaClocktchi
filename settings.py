@@ -40,7 +40,10 @@ class Settings:
         
         # Ensure pet name is exactly 4 characters
         if len(self.pet_name) != 4:
-            self.pet_name = self.pet_name[:4].ljust(4)
+            self.pet_name = self.pet_name[:4]  # Truncate to 4 chars
+            # Pad with spaces if needed
+            while len(self.pet_name) < 4:
+                self.pet_name += " "
     
     def clear_screen(self):
         """Clear the entire screen"""
@@ -345,24 +348,32 @@ class Settings:
     def load_settings(self):
         """Load settings from file if it exists"""
         try:
-            # Check if settings file exists
-            try:
-                os.stat('pet_settings.txt')
-                file_exists = True
-            except:
-                file_exists = False
-            
-            if file_exists:
-                with open('pet_settings.txt', 'r') as f:
-                    for line in f:
-                        if '=' in line:
-                            key, value = line.strip().split('=', 1)
-                            if key == 'name':
-                                self.pet_name = value.ljust(4)[:4]  # Ensure exactly 4 chars
-                            elif key == 'type':
+            with open('pet_settings.txt', 'r') as f:
+                for line in f:
+                    line = line.strip()  # Remove whitespace
+                    if line and '=' in line:  # Skip empty lines
+                        key, value = line.split('=', 1)
+                        key = key.strip()
+                        value = value.strip()
+                        if key == 'name':
+                            # Simple string handling - no ljust needed
+                            if value:
+                                self.pet_name = value[:4]  # Just truncate to 4 chars
+                                # Pad with spaces if needed
+                                while len(self.pet_name) < 4:
+                                    self.pet_name += " "
+                            else:
+                                self.pet_name = "    "  # Default 4 spaces
+                        elif key == 'type':
+                            if value:
                                 self.pet_type = value
-        except:
-            print("Error loading settings")
+                            else:
+                                self.pet_type = "Fox"  # Default to Fox
+        except Exception as e:
+            print(f"Error loading settings: {e}")
+            # Set defaults if loading fails
+            self.pet_name = "    "
+            self.pet_type = "Fox"
     
     def is_first_boot(self):
         """Check if this is the first boot"""
@@ -387,10 +398,18 @@ class Settings:
         """Run the settings interface"""
         self.settings_complete = False
         
-        # Initialize name to 4 spaces
-        self.pet_name = "    "
+        # Load existing settings instead of resetting to defaults
+        # This preserves the current name and pet type
+        self.load_settings()
+        
+        # Initialize name position and character index
         self.name_position = 0
         self.char_index = 0
+        
+        # If pet name is shorter than 4 characters, pad it
+        if len(self.pet_name) < 4:
+            while len(self.pet_name) < 4:
+                self.pet_name += " "
         
         while not self.settings_complete:
             # Draw current page
