@@ -1,3 +1,3 @@
-name=AAAA
+name=Foxy
 type=Fox
 setup_complete=True
