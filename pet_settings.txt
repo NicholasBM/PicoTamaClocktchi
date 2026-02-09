@@ -1,0 +1,5 @@
+name=Gary
+type=Grayhound
+setup_complete=True
+pet_birth_time=1732233600
+god_mode=False

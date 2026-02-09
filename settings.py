@@ -1,0 +1,644 @@
+# Settings module for PicoTamachibi
+# Handles time setup, pet naming, and pet selection
+
+from machine import I2C, Pin, RTC
+from gui.ssd1306 import SSD1306_I2C
+from fixed_icon import Button
+from time import sleep, time
+import os
+
+class Settings:
+    def __init__(self, i2c, oled):
+        """Initialize settings with the given I2C and OLED display"""
+        self.i2c = i2c
+        self.oled = oled
+        self.button_a = Button(2)  # Left
+        self.button_b = Button(3)  # Center/Action
+        self.button_x = Button(4)  # Right
+        
+        # Settings variables
+        self.hour = 12
+        self.minute = 0
+        self.am_pm = "AM"
+        self.pet_name = "    "  # Start with 4 spaces
+        self.pet_type = "Fox"  # Fox or Grayhound
+        self.god_mode = False  # God mode (pet never dies)
+        self.pet_birth_time = None  # Store birth time from file
+        self.starting_age = 0  # Starting age in days (NEW)
+        
+        # Settings state
+        self.current_page = 0  # 0=time, 1=name, 2=pet type, 3=starting age, 4=god mode, 5=confirm
+        self.current_field = 0  # Field index within current page
+        self.settings_complete = False
+        self.hold_timer = 0  # Timer for button holds
+        
+        # Character selection for naming
+        self.available_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
+        self.char_index = 0
+        self.name_position = 0
+        self.max_name_length = 4  # Limit to 4 letters
+        
+        # Load settings if they exist
+        self.load_settings()
+        
+        # Ensure pet name is exactly 4 characters
+        if len(self.pet_name) != 4:
+            self.pet_name = self.pet_name[:4]  # Truncate to 4 chars
+            # Pad with spaces if needed
+            while len(self.pet_name) < 4:
+                self.pet_name += " "
+    
+    def clear_screen(self):
+        """Clear the entire screen"""
+        self.oled.fill(0)
+    
+    def show_screen(self):
+        """Update the display - call this once after all drawing is complete"""
+        self.oled.show()
+        sleep(0.05)  # Small delay to reduce flickering
+    
+    def draw_header(self, title):
+        """Draw a header with the given title"""
+        self.oled.fill_rect(0, 0, 128, 16, 1)  # White background
+        self.oled.text(title, 5, 4, 0)  # Black text
+        self.oled.hline(0, 16, 128, 1)  # Horizontal line
+    
+    def draw_footer(self, left_text, center_text, right_text):
+        """Draw footer with button labels"""
+        self.oled.hline(0, 54, 128, 1)  # Horizontal line
+        self.oled.text(left_text, 0, 56, 1)  # A button
+        
+        # Center the center text
+        center_x = 64 - (len(center_text) * 4) // 2
+        self.oled.text(center_text, center_x, 56, 1)  # B button
+        
+        # Right-align the right text
+        right_x = 128 - len(right_text) * 8
+        self.oled.text(right_text, right_x, 56, 1)  # X button
+    
+    def draw_progress(self):
+        """Draw progress indicator"""
+        total_pages = 6  # Time, Name, Pet Type, Starting Age, God Mode, Confirm
+        
+        # Draw small dots for each page
+        for i in range(total_pages):
+            if i == self.current_page:
+                # Current page - filled circle
+                self.oled.fill_rect(44 + i*8, 46, 4, 4, 1)
+            else:
+                # Other pages - empty circle
+                self.oled.rect(44 + i*8, 46, 4, 4, 1)
+    
+    def draw_time_setup(self):
+        """Draw the time setup page"""
+        self.clear_screen()
+        self.draw_header("Set Time")
+        
+        # Draw time fields
+        hour_str = f"{self.hour:2d}"
+        minute_str = f"{self.minute:02d}"
+        
+        # Draw time in large format
+        self.oled.text(hour_str, 40, 25, 1)
+        self.oled.text(":", 56, 25, 1)
+        self.oled.text(minute_str, 64, 25, 1)
+        self.oled.text(self.am_pm, 88, 25, 1)
+        
+        # Highlight current field
+        if self.current_field == 0:  # Hour
+            self.oled.rect(38, 23, 16, 12, 1)
+        elif self.current_field == 1:  # Minute
+            self.oled.rect(62, 23, 16, 12, 1)
+        else:  # AM/PM
+            self.oled.rect(86, 23, 16, 12, 1)
+        
+        self.draw_progress()
+        
+        # Update footer based on current field
+        if self.current_field == 2:  # AM/PM field
+            self.draw_footer("Next", "Change", "Back")
+        else:
+            self.draw_footer("Next", "Change", "Back")
+            
+        self.show_screen()
+    
+    def draw_name_setup(self):
+        """Draw the pet naming page"""
+        self.clear_screen()
+        self.draw_header("Name Your Pet")
+        
+        # Calculate center position for the name
+        name_x = 64 - (self.max_name_length * 4)
+        
+        # Draw name boxes (4 characters)
+        for i in range(self.max_name_length):
+            # Draw box for each character position
+            box_x = name_x + (i * 8)
+            if i == self.name_position:
+                # Highlight current position
+                self.oled.fill_rect(box_x, 25, 8, 12, 1)
+                # Draw character in inverse color if it exists
+                if i < len(self.pet_name) and self.pet_name[i] != ' ':
+                    self.oled.text(self.pet_name[i], box_x, 27, 0)
+            else:
+                # Draw character normally
+                if i < len(self.pet_name) and self.pet_name[i] != ' ':
+                    self.oled.text(self.pet_name[i], box_x, 27, 1)
+                else:
+                    # Draw underscore for empty positions
+                    self.oled.hline(box_x, 35, 8, 1)
+        
+        # Draw current character being selected
+        self.oled.text("Select:", 30, 40, 1)
+        self.oled.fill_rect(70, 38, 10, 12, 1)  # Highlight box
+        self.oled.text(self.available_chars[self.char_index], 72, 40, 0)  # Inverse text
+        
+        # Check if name already exists (not all spaces)
+        has_existing_name = self.pet_name.strip() != ""
+        
+        # Draw instructions based on whether name exists
+        if has_existing_name:
+            self.oled.text("A:Skip B:Edit", 25, 48, 1)
+        else:
+            self.oled.text("A:Next B:Select", 20, 48, 1)
+        
+        self.draw_progress()
+        
+        # Update footer based on whether name exists
+        if has_existing_name:
+            self.draw_footer("Skip", "Edit", "Back")
+        else:
+            self.draw_footer("Cycle", "Select", "Back")
+        self.show_screen()
+    
+    def draw_pet_setup(self):
+        """Draw the pet type selection page"""
+        self.clear_screen()
+        self.draw_header("Select Pet Type")
+        
+        # Draw pet options
+        self.oled.text("Fox", 30, 25, 1)
+        self.oled.text("Grayhound", 30, 35, 1)
+        
+        # Highlight current selection
+        if self.pet_type == "Fox":
+            self.oled.fill_rect(20, 25, 8, 8, 1)
+            self.oled.text("*", 20, 25, 0)
+        else:
+            self.oled.fill_rect(20, 35, 8, 8, 1)
+            self.oled.text("*", 20, 35, 0)
+        
+        self.draw_progress()
+        self.draw_footer("Next", "Select", "Back")
+        self.show_screen()
+    
+    def draw_god_mode_setup(self):
+        """Draw the god mode selection page"""
+        self.clear_screen()
+        self.draw_header("God Mode")
+        
+        # Draw explanation
+        self.oled.text("Pet never dies", 20, 20, 1)
+        self.oled.text("(for holidays)", 20, 28, 1)
+        
+        # Draw options
+        self.oled.text("Off", 30, 38, 1)
+        self.oled.text("On", 70, 38, 1)
+        
+        # Highlight current selection
+        if self.god_mode:
+            self.oled.fill_rect(60, 38, 8, 8, 1)
+            self.oled.text("*", 60, 38, 0)
+        else:
+            self.oled.fill_rect(20, 38, 8, 8, 1)
+            self.oled.text("*", 20, 38, 0)
+        
+        self.draw_progress()
+        self.draw_footer("Next", "Toggle", "Back")
+        self.show_screen()
+    
+    def draw_starting_age_setup(self):
+        """Draw the starting age selection page"""
+        self.clear_screen()
+        self.draw_header("Starting Age")
+        
+        # Draw explanation
+        self.oled.text("Set pet age", 25, 20, 1)
+        self.oled.text("in days", 35, 28, 1)
+        
+        # Draw age value (large)
+        age_str = f"{self.starting_age}"
+        # Center the age value
+        x_pos = 64 - (len(age_str) * 4)
+        self.oled.text(age_str, x_pos, 38, 1)
+        self.oled.text("days", x_pos + len(age_str) * 8 + 5, 38, 1)
+        
+        self.draw_progress()
+        self.draw_footer("Next", "+10/-10", "Back")
+        self.show_screen()
+    
+    def draw_confirm_page(self):
+        """Draw the confirmation page"""
+        self.clear_screen()
+        self.draw_header("Confirm Settings")
+        
+        # Format time for display
+        hour_str = f"{self.hour:2d}"
+        minute_str = f"{self.minute:02d}"
+        time_str = f"{hour_str}:{minute_str} {self.am_pm}"
+        
+        # Draw settings summary (compact)
+        self.oled.text("Time: " + time_str, 5, 16, 1)
+        self.oled.text("Name: " + self.pet_name.strip(), 5, 24, 1)
+        self.oled.text("Pet: " + self.pet_type, 5, 32, 1)
+        self.oled.text(f"Age: {self.starting_age}d", 5, 40, 1)
+        god_status = "On" if self.god_mode else "Off"
+        self.oled.text("God: " + god_status, 70, 40, 1)
+        
+        self.draw_progress()
+        self.draw_footer("Back", "Confirm", "Cancel")
+        self.show_screen()
+    
+    def handle_time_input(self):
+        """Handle input for time setup page"""
+        if self.button_a.is_pressed:
+            # Next field
+            self.current_field = (self.current_field + 1) % 3
+            
+            # If we're on the AM/PM field and press Next again, go to next page
+            if self.current_field == 0 and self.button_a.is_pressed:
+                self.current_page += 1
+                self.name_position = 0
+                self.char_index = 0
+                
+            sleep(0.2)  # Debounce
+        
+        elif self.button_b.is_pressed:
+            # Change value of current field
+            if self.current_field == 0:  # Hour
+                self.hour = (self.hour % 12) + 1  # 1-12
+            elif self.current_field == 1:  # Minute
+                self.minute = (self.minute + 1) % 60  # 0-59
+            else:  # AM/PM
+                self.am_pm = "PM" if self.am_pm == "AM" else "AM"
+            sleep(0.2)  # Debounce
+        
+        elif self.button_x.is_pressed:
+            # Back - go to previous field or do nothing if at first field
+            if self.current_field > 0:
+                self.current_field -= 1
+            sleep(0.2)  # Debounce
+    
+    def handle_name_input(self):
+        """Handle input for name setup page"""
+        # Check if name already exists (not all spaces)
+        has_existing_name = self.pet_name.strip() != ""
+        
+        if self.button_a.is_pressed:
+            # If name exists and we're at the first position, skip to next page
+            if has_existing_name and self.name_position == 0:
+                self.current_page += 1
+                self.current_field = 0
+                sleep(0.2)  # Debounce
+            else:
+                # Cycle through characters
+                self.char_index = (self.char_index + 1) % len(self.available_chars)
+                sleep(0.1)  # Shorter debounce for faster character cycling
+        
+        elif self.button_b.is_pressed:
+            # Select current character and move to next position
+            # Update the character at the current position
+            name_list = list(self.pet_name)
+            name_list[self.name_position] = self.available_chars[self.char_index]
+            self.pet_name = ''.join(name_list)
+            
+            # Move to next position or next page if done
+            if self.name_position < self.max_name_length - 1:
+                self.name_position += 1
+                self.char_index = 0  # Reset character selection
+            else:
+                # All characters selected, move to next page
+                self.current_page += 1
+                self.current_field = 0
+            
+            sleep(0.2)  # Debounce
+        
+        elif self.button_x.is_pressed:
+            # Back - go to previous position or previous page
+            if self.name_position > 0:
+                self.name_position -= 1
+            else:
+                # At first position, go back to time page
+                self.current_page -= 1
+                self.current_field = 2  # Set to AM/PM field on time page
+            
+            sleep(0.2)  # Debounce
+    
+    def handle_pet_input(self):
+        """Handle input for pet type selection page"""
+        if self.button_a.is_pressed:
+            # Next page
+            self.current_page += 1
+            sleep(0.2)  # Debounce
+        
+        elif self.button_b.is_pressed:
+            # Toggle pet type
+            self.pet_type = "Grayhound" if self.pet_type == "Fox" else "Fox"
+            sleep(0.2)  # Debounce
+        
+        elif self.button_x.is_pressed:
+            # Back - go to previous page
+            self.current_page -= 1
+            self.name_position = self.max_name_length - 1  # Go to last character of name
+            sleep(0.2)  # Debounce
+    
+    def handle_god_mode_input(self):
+        """Handle input for god mode selection page"""
+        if self.button_a.is_pressed:
+            # Next page
+            self.current_page += 1
+            sleep(0.2)  # Debounce
+        
+        elif self.button_b.is_pressed:
+            # Toggle god mode
+            self.god_mode = not self.god_mode
+            sleep(0.2)  # Debounce
+        
+        elif self.button_x.is_pressed:
+            # Back - go to previous page
+            self.current_page -= 1
+            sleep(0.2)  # Debounce
+    
+    def handle_starting_age_input(self):
+        """Handle input for starting age selection page"""
+        if self.button_a.is_pressed:
+            # Next page
+            self.current_page += 1
+            sleep(0.2)  # Debounce
+        
+        elif self.button_b.is_pressed:
+            # Increase age by 10 days
+            self.starting_age += 10
+            # Cap at 999 days
+            if self.starting_age > 999:
+                self.starting_age = 999
+            sleep(0.15)  # Shorter debounce for faster incrementing
+        
+        elif self.button_x.is_pressed:
+            # Decrease age by 10 days
+            self.starting_age -= 10
+            # Don't go below 0
+            if self.starting_age < 0:
+                self.starting_age = 0
+            sleep(0.15)  # Shorter debounce for faster decrementing
+    
+    def handle_confirm_input(self):
+        """Handle input for confirmation page"""
+        if self.button_a.is_pressed:
+            # Back - go to previous page
+            self.current_page -= 1
+            sleep(0.2)  # Debounce
+        
+        elif self.button_b.is_pressed:
+            # Start hold timer for confirmation
+            if self.hold_timer == 0:
+                self.hold_timer = time()
+            
+            # Check if button has been held long enough (1 second)
+            if time() - self.hold_timer >= 1:
+                # Confirm settings
+                self.apply_settings()
+                self.save_settings()
+                self.settings_complete = True
+                self.hold_timer = 0
+        
+        elif self.button_x.is_pressed:
+            # Cancel - reset to first page
+            self.current_page = 0
+            self.current_field = 0
+            sleep(0.2)  # Debounce
+        
+        else:
+            # Button released, reset hold timer
+            self.hold_timer = 0
+    
+    def apply_settings(self):
+        """Apply the settings to the system"""
+        # Set the RTC time
+        rtc = RTC()
+        
+        # Convert 12-hour to 24-hour format
+        hour_24 = self.hour
+        if self.am_pm == "PM" and self.hour < 12:
+            hour_24 += 12
+        elif self.am_pm == "AM" and self.hour == 12:
+            hour_24 = 0
+        
+        # Get current date components (year, month, day)
+        current_datetime = rtc.datetime()
+        year = current_datetime[0]
+        month = current_datetime[1]
+        day = current_datetime[2]
+        
+        # Set new time while keeping the date
+        rtc.datetime((year, month, day, 0, hour_24, self.minute, 0, 0))
+        
+        # Calculate pet birth time based on starting age
+        # This is done AFTER setting the RTC time so it's calculated correctly
+        current_time = time()
+        seconds_per_day = 24 * 60 * 60
+        age_in_seconds = self.starting_age * seconds_per_day
+        self.pet_birth_time = current_time - age_in_seconds
+        
+        print(f"Applied settings: Starting age = {self.starting_age} days")
+        print(f"Calculated birth time: {int(self.pet_birth_time)}")
+        
+        # Clean up pet name (remove trailing spaces)
+        self.pet_name = self.pet_name.strip()
+    
+    def save_settings(self, pet_birth_time=None, god_mode=None):
+        """Save settings to a file"""
+        try:
+            # Read existing settings to preserve values we're not updating
+            existing_settings = {}
+            try:
+                with open('pet_settings.txt', 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and '=' in line:
+                            key, value = line.split('=', 1)
+                            existing_settings[key.strip()] = value.strip()
+            except:
+                pass
+            
+            # Write settings, preserving birth time and god mode if not provided
+            with open('pet_settings.txt', 'w') as f:
+                f.write(f"name={self.pet_name.strip()}\n")
+                f.write(f"type={self.pet_type}\n")
+                f.write(f"setup_complete=True\n")
+                
+                # Preserve or update pet_birth_time
+                if pet_birth_time is not None:
+                    f.write(f"pet_birth_time={pet_birth_time}\n")
+                elif 'pet_birth_time' in existing_settings:
+                    f.write(f"pet_birth_time={existing_settings['pet_birth_time']}\n")
+                
+                # Preserve or update god_mode
+                if god_mode is not None:
+                    f.write(f"god_mode={god_mode}\n")
+                elif 'god_mode' in existing_settings:
+                    f.write(f"god_mode={existing_settings['god_mode']}\n")
+                else:
+                    f.write(f"god_mode=False\n")
+        except Exception as e:
+            print(f"Error saving settings: {e}")
+    
+    def load_settings(self):
+        """Load settings from file if it exists"""
+        try:
+            with open('pet_settings.txt', 'r') as f:
+                for line in f:
+                    line = line.strip()  # Remove whitespace
+                    if line and '=' in line:  # Skip empty lines
+                        key, value = line.split('=', 1)
+                        key = key.strip()
+                        value = value.strip()
+                        if key == 'name':
+                            # Simple string handling - no ljust needed
+                            if value:
+                                self.pet_name = value[:4]  # Just truncate to 4 chars
+                                # Pad with spaces if needed
+                                while len(self.pet_name) < 4:
+                                    self.pet_name += " "
+                            else:
+                                self.pet_name = "    "  # Default 4 spaces
+                        elif key == 'type':
+                            if value:
+                                self.pet_type = value
+                            else:
+                                self.pet_type = "Fox"  # Default to Fox
+                        elif key == 'god_mode':
+                            # Load god mode setting
+                            self.god_mode = value.lower() == 'true'
+                        elif key == 'pet_birth_time':
+                            # Store birth time for later use
+                            try:
+                                self.pet_birth_time = float(value)
+                            except:
+                                self.pet_birth_time = None
+        except Exception as e:
+            print(f"Error loading settings: {e}")
+            # Set defaults if loading fails
+            self.pet_name = "    "
+            self.pet_type = "Fox"
+            self.god_mode = False
+            self.pet_birth_time = None
+    
+    def is_first_boot(self):
+        """Check if this is the first boot"""
+        try:
+            # Check if settings file exists
+            try:
+                os.stat('pet_settings.txt')
+                file_exists = True
+            except:
+                file_exists = False
+            
+            if file_exists:
+                with open('pet_settings.txt', 'r') as f:
+                    for line in f:
+                        if line.startswith('setup_complete=True'):
+                            return False
+            return True
+        except:
+            return True
+    
+    def run(self):
+        """Run the settings interface"""
+        self.settings_complete = False
+        
+        # Load existing settings instead of resetting to defaults
+        # This preserves the current name and pet type
+        self.load_settings()
+        
+        # Initialize name position and character index
+        self.name_position = 0
+        self.char_index = 0
+        
+        # If pet name is shorter than 4 characters, pad it
+        if len(self.pet_name) < 4:
+            while len(self.pet_name) < 4:
+                self.pet_name += " "
+        
+        while not self.settings_complete:
+            # Draw current page
+            if self.current_page == 0:
+                self.draw_time_setup()
+                self.handle_time_input()
+                
+                # Move to next page if A is pressed on AM/PM field
+                if self.button_a.is_pressed and self.current_field == 2:
+                    self.current_page += 1
+                    self.current_field = 0
+                    sleep(0.2)  # Debounce
+            
+            elif self.current_page == 1:
+                self.draw_name_setup()
+                self.handle_name_input()
+            
+            elif self.current_page == 2:
+                self.draw_pet_setup()
+                self.handle_pet_input()
+            
+            elif self.current_page == 3:
+                self.draw_starting_age_setup()
+                self.handle_starting_age_input()
+            
+            elif self.current_page == 4:
+                self.draw_god_mode_setup()
+                self.handle_god_mode_input()
+            
+            elif self.current_page == 5:
+                self.draw_confirm_page()
+                self.handle_confirm_input()
+                
+                # Draw hold progress if button is being held
+                if self.hold_timer > 0:
+                    elapsed = time() - self.hold_timer
+                    if elapsed < 1:  # Less than 1 second
+                        # Draw progress bar
+                        progress = int(elapsed * 100)
+                        bar_width = int(progress * 0.64)  # Scale to 64 pixels (half screen)
+                        self.oled.fill_rect(32, 50, bar_width, 2, 1)
+                        self.show_screen()
+            
+            sleep(0.05)
+        
+        # Show completion message
+        self.clear_screen()
+        self.draw_header("Settings Saved")
+        self.oled.text("Welcome", 40, 25, 1)
+        self.oled.text(self.pet_name.strip() + "!", 40, 35, 1)
+        if self.starting_age > 0:
+            self.oled.text(f"Age: {self.starting_age}d", 35, 45, 1)
+        self.show_screen()
+        sleep(2)
+        
+        return {
+            'name': self.pet_name.strip(),
+            'type': self.pet_type,
+            'god_mode': self.god_mode,
+            'pet_birth_time': self.pet_birth_time
+        }
+
+def run_settings(i2c, oled):
+    """Run the settings interface and return the settings"""
+    settings = Settings(i2c, oled)
+    return settings.run()
+
+def check_first_boot(i2c, oled):
+    """Check if this is the first boot and run settings if needed"""
+    settings = Settings(i2c, oled)
+    if settings.is_first_boot():
+        return settings.run()
+    return None
