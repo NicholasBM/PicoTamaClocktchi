@@ -544,8 +544,8 @@ def wakeup():
     global baby, babyzzz
     
     # Update sleep tracking variables
-    # Restore brightness and disable night mode
-    oled.contrast(255)  # Set brightness to 100%
+    # Restore brightness to lowest and disable night mode
+    oled.contrast(1)  # Set brightness to lowest
     oled.invert(False)  # Disable inversion
     gamestate.states["display_inverted"] = False
     
@@ -945,8 +945,8 @@ def do_toolbar_stuff():
             
             gamestate.states["sleeping"] = True
 
-            # Enable night mode and reduce brightness
-            oled.contrast(128)  # Set brightness to 50%
+            # Enable night mode and set brightness to lowest
+            oled.contrast(1)  # Set brightness to lowest
             oled.invert(True)  # Enable inversion
             gamestate.states["display_inverted"] = True
             
@@ -4430,6 +4430,9 @@ while True:
             # Show toolbar when any button is pressed
             gamestate.states["show_toolbar"] = True
             gamestate.states["toolbar_timer"] = TOOLBAR_DISPLAY_TIME
+            # Restore full brightness when interacting
+            if not gamestate.states.get("sleeping", False):
+                oled.contrast(255)  # Set brightness to 100%
         
         if not gamestate.states["cancel"]:
             tb.unselect(index, oled)
@@ -4455,6 +4458,9 @@ while True:
         gamestate.states["toolbar_timer"] -= 1
         if gamestate.states["toolbar_timer"] == 0:
             gamestate.states["show_toolbar"] = False
+            # Set brightness to lowest when showing clock
+            if not gamestate.states.get("sleeping", False):
+                oled.contrast(1)  # Set brightness to lowest
     
     # IMPORTANT: Update host/visit modes BEFORE animation skip logic
     # Update host mode if active

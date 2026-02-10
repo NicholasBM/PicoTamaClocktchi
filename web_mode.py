@@ -138,8 +138,8 @@ def update_web_mode(oled, gamestate, button_x, baby, baby_left, baby_center, bab
         
         # Toggle sleep state
         if gamestate.states.get("sleeping", False):
-            # Wake up - restore brightness and disable night mode
-            oled.contrast(255)  # Set brightness to 100%
+            # Wake up - restore brightness to lowest and disable night mode
+            oled.contrast(1)  # Set brightness to lowest
             oled.invert(False)  # Disable inversion
             gamestate.states["display_inverted"] = False
             
@@ -168,7 +168,7 @@ def update_web_mode(oled, gamestate, button_x, baby, baby_left, baby_center, bab
             gamestate.states["sleeping"] = True
             
             # Enable night mode
-            oled.contrast(128)
+            oled.contrast(1)  # Set brightness to lowest
             oled.invert(True)
             gamestate.states["display_inverted"] = True
             
