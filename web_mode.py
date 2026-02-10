@@ -169,8 +169,8 @@ def update_web_mode(oled, gamestate, button_x, baby, baby_left, baby_center, bab
             
             # Enable night mode
             oled.contrast(1)  # Set brightness to lowest
-            oled.invert(True)
-            gamestate.states["display_inverted"] = True
+            oled.invert(False)  # Keep normal display (not inverted)
+            gamestate.states["display_inverted"] = False
             
             # Select appropriate sleep animation
             if gamestate.states["fox_position"] == 0:

@@ -947,8 +947,8 @@ def do_toolbar_stuff():
 
             # Enable night mode and set brightness to lowest
             oled.contrast(1)  # Set brightness to lowest
-            oled.invert(True)  # Enable inversion
-            gamestate.states["display_inverted"] = True
+            oled.invert(False)  # Keep normal display (not inverted)
+            gamestate.states["display_inverted"] = False
             
             # Select the appropriate sleep animation based on fox position
             if gamestate.states["fox_position"] == 0:  # Left
