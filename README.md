@@ -2,6 +2,8 @@
 
 A virtual pet Tamagotchi-style game for Raspberry Pi Pico W with OLED display. Take care of your digital pet fox or grayhound with feeding, playing, and cleaning!
 
+Video : https://www.youtube.com/watch?v=SM6KgQGmHVs
+
 ## Features
 
 ### Core Gameplay
