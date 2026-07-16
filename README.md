@@ -1,6 +1,11 @@
 # PicoTamaClocktchi 🦊
 
+
 A virtual pet Tamagotchi-style game for Raspberry Pi Pico W with OLED display. Take care of your digital pet fox or grayhound with feeding, playing, and cleaning!
+
+<p align=center>
+  <img src="maxresdefault.jpg" alt="micro radar v2" width="400"/>
+</p>
 
 Video : https://www.youtube.com/watch?v=SM6KgQGmHVs
 
